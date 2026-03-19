@@ -42,9 +42,30 @@ The analysis follows a six-step algorithm:
 
 - Other protocols (SMTP, IMAP, WinRM, RPC) that are accessible but have limited relay impact in typical scenarios.
 
-### Cross-host relay
+### High-value target escalation
 
-When the source and destination hosts are different, the path receives a one-level severity bump (e.g., HIGH → CRITICAL). This reflects the increased practical impact of cross-host relay attacks.
+Relay paths targeting ADCS servers (detected via `/certsrv/` HTTP endpoint) or tier-0 assets (SCCM, Exchange, confirmed ADCS via LDAP) are escalated to **CRITICAL** regardless of the underlying protocol severity. RelayKing identifies these assets automatically via LDAP enumeration during `--audit` mode and via HTTP `/certsrv/` endpoint detection during HTTP scanning.
+
+## Tier-0 asset detection
+
+RelayKing automatically identifies ADCS, SCCM, and Exchange servers and escalates HTTP/HTTPS relay paths against them to **CRITICAL** severity (ESC8 certificate enrollment abuse or application-level domain compromise).
+
+### Detection methods
+
+| Asset type | How detected |
+|---|---|
+| ADCS (Certificate Authority) | LDAP query for `pKIEnrollmentService` objects in `CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration,...`; also detected via HTTP `GET /certsrv/` returning `401` with `NTLM` or `Negotiate` in `WWW-Authenticate` |
+| SCCM | LDAP query for `mssmssite` objects; hostname heuristics (`sccm`, `mecm`, `configmgr`) |
+| Exchange | LDAP query for members of the `Exchange Trusted Subsystem` group |
+
+Tier-0 assets detected via LDAP are stored in the session file and automatically used when scoring relay paths. The hostname-based heuristics are a fallback — LDAP-detected assets are more accurate. Note that `ca` is intentionally excluded from hostname heuristics because it matches too many non-ADCS hosts (e.g., Exchange CAS servers).
+
+### Impact
+
+Any relayable HTTP or HTTPS service on a tier-0 asset receives **CRITICAL** severity, regardless of EPA enforcement status, because the relay target has outsized impact:
+
+- **ADCS** — Certificate enrollment abuse (ESC8) can issue a certificate for any domain account, enabling full domain compromise.
+- **SCCM** — Relay to SCCM management points allows device enrollment, script execution, and lateral movement.
 
 ## CVE-specific paths
 

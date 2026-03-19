@@ -66,7 +66,8 @@
               "advanced/ghost-spn",
               "advanced/webdav",
               "advanced/coercion",
-              "advanced/ntlmv1"
+              "advanced/ntlmv1",
+              "advanced/tier0-adcs"
             ]
           },
           {

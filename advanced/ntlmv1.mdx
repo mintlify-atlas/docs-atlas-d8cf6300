@@ -18,6 +18,23 @@ NTLMv2 includes a MIC that binds the `AUTHENTICATE` message to a specific TLS or
 
 ## Two detection modes
 
+## LmCompatibilityLevel values
+
+The `LmCompatibilityLevel` registry key (`HKLM\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel`) controls which NTLM authentication versions a host will send and accept. Levels 0–2 allow NTLMv1; levels 3–5 enforce NTLMv2 only:
+
+| Level | Behavior | NTLMv1 Enabled? |
+|---|---|---|
+| 0 | Send LM & NTLM responses | Yes |
+| 1 | Send LM & NTLM — use NTLMv2 session security if negotiated | Yes |
+| 2 | Send NTLM response only | Yes |
+| 3 | Send NTLMv2 response only | No (default if key not set) |
+| 4 | Send NTLMv2 response only; refuse LM | No |
+| 5 | Send NTLMv2 response only; refuse LM & NTLM | No |
+
+<Note>
+If the `LmCompatibilityLevel` registry key is not set on a host, Windows uses **level 3** (NTLMv2 only) as the default.
+</Note>
+
 ### --ntlmv1 — Domain-wide GPO check
 
 Queries Active Directory for all LanMan authentication-related GPOs and determines the effective domain-wide `LmCompatibilityLevel` policy. If the policy permits NTLMv1 (level ≤ 2), all hosts in the domain are flagged as potentially using NTLMv1.

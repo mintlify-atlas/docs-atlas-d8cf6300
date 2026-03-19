@@ -14,7 +14,7 @@ The `--audit` flag is the fastest way to get full-domain NTLM relay coverage. Re
 Audit mode requires:
 
 - `-u` / `--username` — any low-privilege domain account
-- `-p` / `--password` — the account's password (or use `-H` for a hash)
+- `-p` / `--password` — the account's password (or use `--hashes` for pass-the-hash)
 - `-d` / `--domain` — the fully-qualified domain name (e.g., `corp.local`)
 - `--dc-ip` — strongly recommended; the IP address of a domain controller
 
@@ -42,7 +42,7 @@ Adding `http` and `https` enables tier-0 HTTP relay path analysis. RelayKing aut
 ```
 
 <Note>
-  HTTP/HTTPS path enumeration is significantly slower — each host is checked against approximately 50 NTLM-enabled paths using 20 worker threads per main thread. Expect a much longer scan duration when these protocols are included.
+  HTTP/HTTPS path enumeration is significantly slower — each host is checked against approximately 60 NTLM-enabled paths using 20 worker threads per main thread. Expect a much longer scan duration when these protocols are included.
 </Note>
 
 ## Ghost SPN check

@@ -120,6 +120,24 @@ description: "Solutions for common RelayKing errors and unexpected behavior."
     For very large domains, split the scan into groups with `--max-scangroup` or `--split-into` to track progress and resume more easily if the scan is interrupted.
   </Accordion>
 
+  <Accordion title="Scan exits immediately with credential validation failure">
+    **Symptom**: RelayKing exits before scanning starts with a message like `Given credential looks invalid` or similar.
+
+    **Cause**: RelayKing validates credentials against the domain controller via LDAP before starting a scan. This safety check prevents account lockouts from running a full scan with invalid credentials. If the credential check fails, the scan will not proceed.
+
+    **Checks**:
+
+    - Confirm the username, password, and domain are correct.
+    - Verify `--dc-ip` points to a reachable DC.
+    - If the DC requires LDAPS for the credential check, add `--ldaps`.
+    - For Kerberos, ensure `KRB5CCNAME` is set and the ticket is valid (`klist`).
+    - Run with `-vv` to see the exact error returned from the DC.
+
+    <Note>
+      This pre-check is intentional — it prevents running thousands of authentication attempts with a locked or invalid account. If the check fails, fix the credentials before retrying.
+    </Note>
+  </Accordion>
+
   <Accordion title="Authentication failures or permission errors">
     **Symptom**: RelayKing reports authentication errors, access denied responses, or produces no results despite valid-looking credentials.
 

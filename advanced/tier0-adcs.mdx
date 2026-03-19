@@ -1,0 +1,120 @@
+---
+title: "Tier-0 and ADCS detection"
+description: "How RelayKing identifies ADCS, SCCM, and Exchange servers via LDAP enumeration and HTTP probing, and why these targets receive CRITICAL severity relay paths."
+---
+
+RelayKing automatically identifies tier-0 assets — ADCS (Active Directory Certificate Services), SCCM, and Exchange servers — during scanning. Any relayable HTTP or HTTPS service on a detected tier-0 asset is escalated to **CRITICAL** severity because of the outsized domain impact these targets offer.
+
+## Why tier-0 targets matter
+
+| Asset | Relay impact |
+|---|---|
+| **ADCS** | ESC8 — relay an authentication to `/certsrv/` to enroll a certificate for any domain account, then use PKINIT to obtain a TGT and potentially full domain compromise |
+| **SCCM** | Relay to the SCCM management point to deploy scripts, create admin accounts, or access managed device secrets |
+| **Exchange** | Relay to OWA or EWS to access mail, exfiltrate data, or abuse Exchange permissions (e.g., DCSync via `msExchPrivilegeCriticalObject`) |
+
+## Detection methods
+
+Tier-0 assets are identified using two complementary methods: LDAP enumeration and HTTP probing. LDAP detection is more reliable; HTTP detection is a fallback that works even without credentials.
+
+### LDAP enumeration (audit mode)
+
+When `--audit` is used, RelayKing queries the domain controller via LDAP to enumerate tier-0 assets:
+
+| Asset | LDAP filter | Search base |
+|---|---|---|
+| ADCS | `(&(objectClass=pKIEnrollmentService))` | `CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration,DC=...` |
+| SCCM | `(objectclass=mssmssite)` | Domain root; extracts `mSSMSMPName`, `mSSMSSiteSystemList`, `mSSMSDefaultMP` attributes |
+| Exchange | `(cn=Exchange Trusted Subsystem)` | Domain root; resolves member computer objects via `distinguishedName` lookup |
+
+Detected hostnames are stored in the session file and used for the duration of the scan (including resumed sessions).
+
+### HTTP probing (all modes)
+
+During HTTP/HTTPS scanning, RelayKing probes every host for the ADCS enrollment endpoint:
+
+```
+GET /certsrv/ HTTP/1.1
+Host: <target>
+```
+
+A `401 Unauthorized` response with `NTLM` or `Negotiate` in the `WWW-Authenticate` header confirms an ADCS server. This check runs on both port 80 (HTTP) and port 443 (HTTPS).
+
+### Hostname heuristics (fallback)
+
+When LDAP detection is not available (e.g., no `--audit` mode, or LDAP enumeration failed), RelayKing falls back to hostname substring matching:
+
+| Heuristic | Matches |
+|---|---|
+| `sccm` | Any hostname containing `sccm` |
+| `mecm` | Any hostname containing `mecm` |
+| `configmgr` | Any hostname containing `configmgr` |
+| `certsrv` | Any hostname containing `certsrv` |
+| `pki` | Any hostname containing `pki` |
+
+<Note>
+`ca` is intentionally **excluded** from hostname heuristics. It matches too many unrelated hostnames (e.g., Exchange CAS servers, certificate authority names in distinguished names). ADCS detection relies on LDAP `pKIEnrollmentService` queries or the `/certsrv/` HTTP probe.
+</Note>
+
+## Impact on relay path severity
+
+From `relay_analyzer.py`, the impact calculation for HTTP/HTTPS paths:
+
+```python
+# HTTP/HTTPS - CRITICAL for ADCS or tier-0/high-value targets, otherwise MEDIUM
+if protocol in ['http', 'https']:
+    if result.additional_info.get('is_adcs'):      # Detected via /certsrv/ HTTP probe
+        return RelayImpact.CRITICAL
+    if self._is_high_value_target(host):            # LDAP-detected or hostname heuristic
+        return RelayImpact.CRITICAL
+    return RelayImpact.MEDIUM
+```
+
+The relay path description for ADCS targets:
+```
+ADCS relay to HTTP/HTTPS on <host> - Certificate enrollment abuse (ESC8), potential domain compromise
+```
+
+## Exploiting ADCS relay paths (ESC8)
+
+When RelayKing reports a CRITICAL HTTP/HTTPS relay path against an ADCS server:
+
+<Steps>
+  <Step title="Verify the ADCS finding">
+    Check the relay path description in the report. An ESC8-exploitable path looks like:
+    ```
+    [CRITICAL] ADCS relay to HTTPS on adcs.corp.local - Certificate enrollment abuse (ESC8)
+    ```
+  </Step>
+  <Step title="Set up ntlmrelayx for ADCS relay">
+    ```bash
+    # Relay to ADCS /certsrv/ for certificate enrollment
+    python3 ntlmrelayx.py \
+      -t https://adcs.corp.local/certsrv/certfnsh.asp \
+      --adcs \
+      --template DomainController \
+      -smb2support
+    ```
+  </Step>
+  <Step title="Coerce authentication">
+    Use PetitPotam, PrinterBug, or another coercion technique to force a domain controller to authenticate to your listener. The resulting certificate can then be used with PKINIT to request a TGT for the DC machine account.
+  </Step>
+</Steps>
+
+## Enabling tier-0 detection
+
+Tier-0 LDAP detection runs automatically in `--audit` mode. HTTP-based ADCS detection runs when `http` or `https` is included in `--protocols`:
+
+```bash
+# Full audit with tier-0 detection enabled
+python3 relayking.py \
+  -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan --proto-portscan
+```
+
+<Tip>
+Always include `http,https` in `--protocols` when scanning environments that may have ADCS or SCCM deployed. These servers are extremely high-value relay targets and are only escalated to CRITICAL when HTTP/HTTPS scanning is active.
+</Tip>
