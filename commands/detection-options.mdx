@@ -1,0 +1,123 @@
+---
+title: "Detection options"
+description: "Flags that control which protocols are tested, which vulnerabilities are checked, and how RelayKing interacts with target hosts during a scan."
+---
+
+## Flags
+
+<ParamField path="--protocols" type="string">
+  Comma-separated list of protocols to test. When omitted, a default set is used based on the active mode.
+
+  Available protocols: `smb`, `http`, `https`, `ldap`, `ldaps`, `mssql`, `smtp`, `imap`, `imaps`, `rpc`, `winrm`, `winrms`
+</ParamField>
+
+<ParamField path="--proto-portscan" type="boolean" default="false">
+  Perform a fast TCP port scan before running protocol checks. Only protocols whose ports are found open are tested. This dramatically reduces scan time by avoiding connection attempts to closed ports.
+
+  <Tip>Enable `--proto-portscan` on every scan. It is highly recommended and has no meaningful downside.</Tip>
+</ParamField>
+
+<ParamField path="--ntlmv1" type="boolean" default="false">
+  Query the domain's Group Policy Objects to detect a domain-wide NTLMv1 policy (`LmCompatibilityLevel`). A permissive policy affects LDAP signing and channel binding relay logic — NTLMv1 responses can be relayed to hosts that would otherwise require signing.
+</ParamField>
+
+<ParamField path="--ntlmv1-all" type="boolean" default="false">
+  Check each host's registry for its local `LmCompatibilityLevel` value via the Remote Registry service. Provides per-host NTLMv1 status rather than the domain-wide GPO value.
+
+  <Warning>Requires administrator access on each target host. This check is slow because it reads the registry remotely on every scanned machine.</Warning>
+</ParamField>
+
+<ParamField path="--coerce" type="boolean" default="false">
+  Test each target for coercion vulnerabilities such as PetitPotam, PrinterBug, and similar techniques that force a host to authenticate to an attacker-controlled listener. Requires `--coerce-target`.
+
+  A coercion path is only reported as a confirmed vulnerability when the attempt succeeds using `--null-auth`. With credentials, successful coercion is still noted but flagged differently.
+</ParamField>
+
+<ParamField path="--coerce-all" type="boolean" default="false">
+  Coerce every AD computer account to authenticate to the listener specified by `--coerce-target`. Requires `--coerce-target`, domain credentials (`-u`, `-p`, `-d`), and a reachable DC (`--dc-ip`). Cannot be combined with `--audit`.
+
+  <Warning>
+    `--coerce-all` is **extremely heavy**. It enumerates all AD computers and sends coercion attempts to every one of them. This generates a large volume of traffic and authentication events. Use only in controlled environments with explicit permission.
+  </Warning>
+</ParamField>
+
+<ParamField path="--coerce-target" type="string">
+  IP address of the listener that target hosts should authenticate to during coercion checks. Required when using `--coerce` or `--coerce-all`. This is typically the IP of a machine running Responder or ntlmrelayx.
+</ParamField>
+
+<ParamField path="--coerce-timeout" type="integer" default="3">
+  Timeout in seconds for each coercion attempt. Increase this value on high-latency networks or through proxies.
+</ParamField>
+
+<ParamField path="--null-auth" type="boolean" default="false">
+  Attempt null/anonymous authentication against targets. When enabled, `-u` and `-p` are not required. Coercion findings (`--coerce`) are only classified as confirmed vulnerabilities when they succeed under null auth.
+
+  Cannot be combined with `--coerce-all`.
+</ParamField>
+
+<ParamField path="--no-ghosts" type="boolean" default="false">
+  Skip the Ghost SPN relay check. Ghost SPN detection runs automatically in `--audit` mode; use this flag to suppress it if it produces false positives or is not relevant to the assessment.
+</ParamField>
+
+## Protocol reference
+
+| Protocol | Default port | Notes |
+|----------|-------------|-------|
+| `smb` | 445 | SMB signing and relay detection |
+| `http` | 80 | HTTP NTLM relay detection |
+| `https` | 443 | HTTPS NTLM relay detection |
+| `ldap` | 389 | LDAP signing and channel binding |
+| `ldaps` | 636 | LDAPS channel binding |
+| `mssql` | 1433 | MSSQL NTLM relay detection |
+| `smtp` | 25 | SMTP NTLM relay detection |
+| `imap` | 143 | IMAP NTLM relay detection |
+| `imaps` | 993 | IMAPS NTLM relay detection |
+| `rpc` | 135 | RPC endpoint mapper |
+| `winrm` | 5985 | WinRM (HTTP) relay detection |
+| `winrms` | 5986 | WinRM (HTTPS) relay detection |
+
+## Common protocol combinations
+
+**Recommended full scan (audit mode):**
+```bash
+--protocols smb,ldap,ldaps,mssql,http,https --proto-portscan
+```
+Adding `http,https` enables tier-0 HTTP relay path analysis on top of the default audit protocol set.
+
+**Quick SMB/LDAP sweep:**
+```bash
+--protocols smb,ldap --proto-portscan
+```
+Fastest scan to identify SMB relay and LDAP signing issues.
+
+**Exchange and mail servers:**
+```bash
+--protocols smtp,imap,imaps,http,https --proto-portscan
+```
+
+**Windows Remote Management:**
+```bash
+--protocols winrm,winrms,http,https --proto-portscan
+```
+
+## Example: coercion check
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap,ldaps \
+  --coerce --coerce-target 10.0.99.1 --coerce-timeout 5
+```
+
+## Example: NTLMv1 checks
+
+Domain-wide GPO check only (fast, no admin required):
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap --ntlmv1
+```
+
+Per-host registry check (slow, admin required on each host):
+```bash
+python3 relayking.py -u administrator -p 'AdminPass!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb --ntlmv1-all
+```

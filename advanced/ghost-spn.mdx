@@ -1,0 +1,97 @@
+---
+title: "Ghost SPN detection"
+description: "SPNs registered in Active Directory whose hostnames have no DNS record. An attacker can register the missing name and intercept NTLM authentication intended for that service."
+---
+
+A Ghost SPN is a Service Principal Name registered in Active Directory — for example, `HOST/fileserver01.corp.local` — where the hostname in the SPN (`fileserver01.corp.local`) no longer has a DNS record. The machine was probably decommissioned, but the SPN was never cleaned up.
+
+This matters for NTLM relay because when a client authenticates to a service by SPN, the SPN's hostname resolves to an IP address in DNS. If that DNS record does not exist, an attacker who controls DNS can register it, point it to a listener, receive the NTLM authentication, and relay it elsewhere.
+
+This detection is inspired by the [GhostSPN](https://github.com/p0dalirius/GhostSPN) tool by p0dalirius.
+
+## When it runs
+
+Ghost SPN detection only runs in `--audit` mode when credentials are present. It queries Active Directory via LDAP for all registered SPNs, then attempts to resolve each hostname via DNS.
+
+<Note>
+Ghost SPN detection is skipped when `--null-auth` is used because it requires an authenticated LDAP bind to query SPNs. It also requires `--audit` mode to have an AD target. Pass `--no-ghosts` to skip the check entirely even in `--audit` mode.
+</Note>
+
+## Two finding categories
+
+RelayKing splits Ghost SPN findings into two categories:
+
+### Vulnerable
+
+The hostname in the SPN resolves **nowhere** — no A record, no CNAME, no response from any configured DNS server. An attacker can register this exact DNS name and immediately begin receiving NTLM authentication from any client that tries to reach that SPN.
+
+### Probably vulnerable
+
+The hostname resolves, but only via a **wildcard DNS record** (a catch-all `*` entry in the zone). Wildcard DNS means the hostname is technically reachable, but an attacker who can create a more-specific DNS record for that hostname would override the wildcard and intercept traffic. This category requires an additional step to exploit.
+
+## Severity
+
+**MEDIUM** — exploitation requires DNS write access (typically a low-privilege AD account can create DNS records in the default zone) and a listener to receive and relay the authentication.
+
+## Output
+
+RelayKing limits the report to **up to 5 findings** to keep output manageable. The full set of findings — all vulnerable and probably-vulnerable SPNs — is always written to `possible-ghost-spns.txt` in the current working directory.
+
+```bash
+# View full Ghost SPN results after a scan
+cat possible-ghost-spns.txt
+```
+
+The relay path description in the report follows this format:
+
+**Vulnerable (no DNS record):**
+```
+Ghost SPN: 'HOST/fileserver01.corp.local' is registered to 'CORP\svc_backup'
+but 'fileserver01.corp.local' has no DNS record —
+Register this DNS name to receive NTLM authentication and relay it.
+```
+
+**Probably vulnerable (wildcard DNS):**
+```
+Ghost SPN (wildcard DNS): 'HTTP/oldapp.corp.local' registered to 'CORP\webservice' —
+'oldapp.corp.local' resolves to 10.0.0.1 via wildcard DNS.
+May be exploitable for NTLM relay.
+```
+
+## Flags
+
+| Flag | Behavior |
+|---|---|
+| *(none — runs automatically in `--audit` mode)* | Ghost SPN check runs after the host scan completes |
+| `--no-ghosts` | Skip Ghost SPN detection entirely |
+
+## Example commands
+
+```bash
+# Full audit including Ghost SPN detection (runs automatically)
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan --proto-portscan
+```
+
+```bash
+# Audit without Ghost SPN check
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 --audit \
+  --protocols smb,ldap,ldaps -o plaintext --no-ghosts
+```
+
+## What a finding means operationally
+
+If you find a Ghost SPN with no DNS record:
+
+1. Confirm you have DNS write access (most low-privilege AD accounts can create records in the default forward lookup zone).
+2. Create an A record pointing the missing hostname to your listener IP.
+3. Run `ntlmrelayx.py` or `responder` on your listener to capture the incoming NTLM authentication.
+4. Relay the captured credentials to a relay-vulnerable target (LDAP, SMB, etc.).
+
+<Tip>
+Ghost SPNs are most valuable when the account the SPN is registered to is a high-privilege service account or a machine account that has local admin rights on other hosts. Check the account name in the finding output before prioritizing exploitation.
+</Tip>

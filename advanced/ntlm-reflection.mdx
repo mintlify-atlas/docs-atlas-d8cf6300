@@ -1,0 +1,94 @@
+---
+title: "NTLM reflection detection"
+description: "How RelayKing detects CVE-2025-33073 NTLM reflection — relaying captured SMB authentication back to the originating host or to any available destination protocol."
+---
+
+NTLM reflection is an attack where an adversary relays captured NTLM authentication credentials **back to the host that sent them**, rather than to a third-party target. Because the authentication comes from the legitimate machine account, the attacker gains access under that machine's identity. CVE-2025-33073 describes a class of unpatched Windows versions that remain exploitable via this path.
+
+RelayKing detects NTLM reflection vulnerability automatically during every scan — no additional flags are required.
+
+## How the attack works
+
+In a standard NTLM relay, an attacker intercepts credentials from Host A and forwards them to Host B. In reflection:
+
+1. The attacker coerces Host A into initiating an NTLM authentication (e.g., via PetitPotam or PrinterBug).
+2. The attacker captures the NTLM exchange and relays it **back to Host A** over a different protocol.
+3. Because Host A trusts its own machine credentials, the relay succeeds.
+
+The vulnerability is client-side: an unpatched Windows host will complete the reflected authentication, even when the destination server has signing or channel binding enabled, because the CVE bypasses those protections at the protocol level.
+
+## Detection logic
+
+RelayKing's `NTLMReflectionDetector` cross-references SMB results with available protocol results for the same host:
+
+1. **Windows version check** — The SMB negotiation returns the OS major/minor/build version. If this is not a Windows host, the check exits immediately.
+2. **UBR (Update Build Revision) query** — RelayKing reads `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\UBR` from the remote registry via the `\pipe\winreg` named pipe. This requires at least read access to RemoteRegistry, which is available with low-privilege credentials in most environments.
+3. **Patch table comparison** — The observed build and UBR are checked against the MSRC patch table for CVE-2025-33073. If `ubr < min_patched_ubr` for the detected build, the host is flagged as vulnerable.
+4. **Relay path construction** — RelayKing then enumerates all protocols available on that host (SMB, HTTP, HTTPS, LDAP, LDAPS, MSSQL, SMTP, IMAP, IMAPS) and builds a relay path list. SMB is included in the list only when SMB signing is not required on that host.
+
+## Conditions for vulnerability
+
+| Condition | Meaning |
+|---|---|
+| Windows version in MSRC patch table | Build is a known-affected product |
+| `UBR < min_patched_ubr` for that build | Host has not received the patch |
+| SMB signing not required (optional) | SMB is also a valid relay destination |
+| HTTP EPA not enforced (optional) | HTTP is also a valid relay destination |
+
+Both SMB signing state and HTTP EPA enforcement are already collected by RelayKing's protocol detectors during the same scan pass. The reflection detector reads those results directly — **no additional network requests are made**.
+
+## Severity
+
+Severity varies based on which protocols are available as relay destinations:
+
+| Available relay destinations | Severity |
+|---|---|
+| LDAP or LDAPS | HIGH (cross-protocol relay to directory service) |
+| SMB + LDAP/LDAPS | HIGH (multiple viable paths) |
+| SMB only (signing not required) | HIGH |
+| HTTP/HTTPS only | MEDIUM |
+
+<Note>
+The relay path list produced by the reflection detector is also used to populate `--gen-relay-list` output. Each available protocol is included as a separate relay target entry.
+</Note>
+
+## Patch reference (CVE-2025-33073)
+
+The following builds are checked against their minimum patched UBR:
+
+| Windows version | Build | Minimum patched UBR |
+|---|---|---|
+| Windows Server 2008 SP2 | 6.0.6003 | 23351 |
+| Windows Server 2008 R2 SP1 | 6.1.7601 | 27769 |
+| Windows Server 2012 | 6.2.9200 | 25522 |
+| Windows Server 2012 R2 | 6.3.9600 | 22620 |
+| Windows Server 2016 | 10.0.14393 | 8148 |
+| Windows Server 2019 / Win10 1809 | 10.0.17763 | 7434 |
+| Windows Server 2022 | 10.0.20348 | 3807 |
+| Windows 10 21H2 | 10.0.19044 | 5965 |
+| Windows 11 22H2 | 10.0.22621 | 5472 |
+| Windows Server 2025 / Windows 11 24H2 | 10.0.26100 | 6584 |
+
+Hosts on builds not listed in this table are reported as unknown — the detector does not flag them as vulnerable.
+
+## What a vulnerable result means
+
+When a host is flagged vulnerable to CVE-2025-33073:
+
+- You can coerce NTLM authentication from that host (e.g., via PetitPotam or PrinterBug) and relay it back to the same host over any of the listed destination protocols.
+- If LDAP or LDAPS is available, relay gives you write access to Active Directory (computer account creation, RBCD, shadow credentials).
+- If SMB signing is not required, you can relay directly back over SMB for file system access or remote execution.
+
+<Tip>
+Combine NTLM reflection findings with coercion detection (`--coerce`) to confirm which coercion primitives are available on the same host. A host that is both vulnerable to CVE-2025-33073 and coercible via PetitPotam is a complete, end-to-end exploitable path.
+</Tip>
+
+## Flags
+
+The NTLM reflection detector runs automatically during every scan. No flag is required to enable it. The UBR registry read is performed as part of the standard per-host workflow alongside SMB detection.
+
+| Behavior | Details |
+|---|---|
+| Runs automatically | Yes — no flag needed |
+| Auth required | Low-privilege credentials recommended; null auth may work if RemoteRegistry allows anonymous reads |
+| Additional network requests | No — UBR is read from the registry connection already opened for CVE checks |

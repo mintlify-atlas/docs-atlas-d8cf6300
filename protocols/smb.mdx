@@ -1,0 +1,94 @@
+---
+title: "SMB detection"
+description: "How RelayKing detects SMB signing requirements, version negotiation, and relay vulnerability across SMB2/SMB3 dialects."
+---
+
+RelayKing's SMB detector checks every host on port 445 for signing enforcement, negotiated dialect, and channel binding support. Because signing state is read from the protocol negotiation handshake — before any authentication step — **no credentials are required** for a reliable result.
+
+## What is checked
+
+| Check | Auth required | Notes |
+|---|---|---|
+| Signing required | No | Read from `RequireSigning` negotiation flag for SMB2+; `isSigningRequired()` for SMBv1 |
+| SMB dialect / version | No | Detected during negotiation: SMB1, SMB2.0, SMB2.1, SMB3.0, SMB3.0.2, SMB3.1.1 |
+| Channel binding (SMB 3.1.1) | No | Automatically flagged when dialect is `SMB2_DIALECT_311` |
+| NTLMv1 support | No (heuristic) | Assumed supported when SMBv1 dialect is negotiated |
+| Anonymous/null session | No | Flagged when `--null-auth` is used or no credentials are supplied |
+| Server OS / hostname / domain | Optional | Collected on successful login; aids in DC identification and CVE checks |
+
+## Relay condition
+
+A host is relay-vulnerable over SMB when **signing is not required**:
+
+```
+signing_required == False  →  RELAYABLE
+```
+
+Signing is the only SMB-layer protection that prevents conventional NTLM relay. An attacker who captures an NTLM authentication can relay it directly to the target if signing is disabled or set to "not required" (the Windows default for non-domain-controller workstations).
+
+## SMB 3.1.1 and channel binding
+
+SMB 3.1.1 introduces pre-authentication integrity checks and supports AES-128-GCM encryption. When the negotiated dialect is `SMB2_DIALECT_311`, RelayKing sets `channel_binding = True` in the result and records `supports_encryption = True` in additional info.
+
+<Note>
+Channel binding on SMB 3.1.1 does **not** by itself prevent NTLM relay — signing enforcement is still the controlling protection. Channel binding on SMB is distinct from LDAPS or HTTPS channel binding tokens (CBT). The flag is informational and used for reporting context, not relay assessment.
+</Note>
+
+## Authentication fallback behaviour
+
+When credentials are provided but authentication fails, the detector attempts to read the signing state from the already-established negotiation before returning:
+
+- `STATUS_LOGON_FAILURE` → host marked available, signing state read from negotiation, error recorded.
+- `STATUS_ACCESS_DENIED` → same fallback.
+- Kerberos failure (KDC/KRB error in exception string) → signing state read from negotiation, Kerberos fallback to NTLM is **intentionally suppressed** to avoid account lockouts.
+
+This means that even against a host where your credentials are rejected, RelayKing can still determine whether signing is enforced.
+
+## Flag and port
+
+| Parameter | Value |
+|---|---|
+| `--protocols` value | `smb` |
+| Default port | `445` |
+| Auth required | No (signing check); optional (OS metadata) |
+
+SMB is included in the default protocol set. You do not need to pass `--protocols smb` explicitly unless you are restricting other protocols.
+
+## Example commands
+
+<Tabs>
+  <Tab title="Unauthenticated sweep">
+```bash
+python3 relayking.py --null-auth -vv --protocols smb -o plaintext 10.0.0.0/24
+```
+
+Checks all 256 hosts for SMB signing without credentials. Signing state and dialect are recovered from the negotiation handshake alone.
+  </Tab>
+  <Tab title="Authenticated full audit">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --ntlmv1 \
+  --gen-relay-list relaytargets.txt
+```
+
+Full domain audit including SMB. OS metadata (major/minor/build) collected on each authenticated host is used for CVE-2025-54918 and CVE-2019-1040 checks.
+  </Tab>
+  <Tab title="Single target">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  -vv --protocols smb -o plaintext SERVER1.CORP.LOCAL
+```
+  </Tab>
+</Tabs>
+
+## Relay list output
+
+When `--gen-relay-list relaytargets.txt` is supplied, all SMB hosts where `signing_required == False` are written to the file in a format compatible with `ntlmrelayx.py -tf`.
+
+<Tip>
+Use `--proto-portscan` alongside SMB detection. Port 445 is checked first; hosts that do not respond skip the full negotiation sequence, which substantially reduces scan time on large subnets.
+</Tip>

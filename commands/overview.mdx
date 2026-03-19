@@ -1,0 +1,125 @@
+---
+title: "Command overview"
+description: "Complete reference for all RelayKing CLI flags, grouped by category."
+---
+
+RelayKing is invoked as:
+
+```bash
+python3 relayking.py [args]
+```
+
+Arguments are organized into five groups: [Authentication](/commands/authentication), [Targets](/commands/targets), [Detection options](/commands/detection-options), [Output options](/commands/output-options), and [Performance](/commands/performance).
+
+## Argument groups
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/commands/authentication">
+    Username, password, domain, NTLM hashes, Kerberos, and DC/DNS settings.
+  </Card>
+  <Card title="Targets" icon="crosshairs" href="/commands/targets">
+    IP addresses, CIDR ranges, target files, audit mode, and session resume.
+  </Card>
+  <Card title="Detection options" icon="shield" href="/commands/detection-options">
+    Protocol selection, port scanning, NTLMv1, coercion checks, and null auth.
+  </Card>
+  <Card title="Output options" icon="file-export" href="/commands/output-options">
+    Output formats, file naming, relay list generation, and verbosity.
+  </Card>
+  <Card title="Performance" icon="gauge" href="/commands/performance">
+    Thread count, timeouts, scan grouping, and LDAP page size.
+  </Card>
+</CardGroup>
+
+## Full help output
+
+```bash
+python3 relayking.py -h
+```
+
+```
+usage: relayking.py [-h] [-u USERNAME] [-p PASSWORD] [-d DOMAIN]
+                    [--hashes LMHASH:NTHASH] [--aesKey AESKEY] [-k]
+                    [--krb-dc-only] [--no-pass] [--dc-ip DC_IP]
+                    [-ns NAMESERVER] [--dns-tcp] [--ldap] [--ldaps]
+                    [-t TARGET_FILE] [--audit] [--no-ping]
+                    [--session-resume FILE]
+                    [--protocols PROTOCOLS] [--proto-portscan] [--ntlmv1]
+                    [--ntlmv1-all] [--coerce] [--coerce-all]
+                    [--coerce-target COERCE_TARGET]
+                    [--coerce-timeout COERCE_TIMEOUT] [--null-auth]
+                    [--no-ghosts]
+                    [-o OUTPUT_FORMAT] [--output-file OUTPUT_FILE]
+                    [--gen-relay-list GEN_RELAY_LIST] [-v]
+                    [--threads THREADS] [--timeout TIMEOUT]
+                    [--max-scangroup MAX_SCANGROUP] [--split-into SPLIT_INTO]
+                    [--skip SKIP] [--ad-page-size AD_PAGE_SIZE]
+                    [target ...]
+
+RelayKing - NTLM & Kerberos Relay Detection Tool
+```
+
+## Quick reference
+
+### Authentication
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-u / --username` | string | — | Username for authentication |
+| `-p / --password` | string | — | Password for authentication |
+| `-d / --domain` | string | — | Domain name |
+| `--hashes LMHASH:NTHASH` | string | — | NTLM hashes (LM:NT) |
+| `--aesKey` | string | — | AES key for Kerberos |
+| `-k / --kerberos` | boolean | false | Use Kerberos authentication |
+| `--krb-dc-only` | boolean | false | Kerberos for DCs only, NTLM elsewhere |
+| `--no-pass` | boolean | false | Skip password prompt (use with `-k`) |
+| `--dc-ip` | string | — | Domain Controller IP |
+| `-ns / --nameserver` | string | — | Custom DNS server |
+| `--dns-tcp` | boolean | false | Use TCP for DNS resolution |
+| `--ldap` | boolean | false | Force LDAP |
+| `--ldaps` | boolean | false | Force LDAPS |
+
+### Targets
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `target` | string\[] | — | IP, hostname, CIDR, or range (positional) |
+| `-t / --target-file` | string | — | File with targets (one per line) |
+| `--audit` | boolean | false | Enumerate all AD computers via LDAP |
+| `--no-ping` | boolean | false | Skip ping sweep (use with SOCKS proxies) |
+| `--session-resume FILE` | string | — | Resume from a `.resume` session file |
+
+### Detection options
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--protocols` | string | — | Comma-separated protocol list |
+| `--proto-portscan` | boolean | false | Fast port scan before protocol checks |
+| `--ntlmv1` | boolean | false | Check GPO for domain-wide NTLMv1 policy |
+| `--ntlmv1-all` | boolean | false | Per-host registry check (requires admin) |
+| `--coerce` | boolean | false | Check for coercion vulnerabilities |
+| `--coerce-all` | boolean | false | Coerce all AD computers (extremely heavy) |
+| `--coerce-target` | string | — | Listener IP for coercion |
+| `--coerce-timeout` | integer | 3 | Coercion check timeout in seconds |
+| `--null-auth` | boolean | false | Attempt null/anonymous authentication |
+| `--no-ghosts` | boolean | false | Skip Ghost SPN check |
+
+### Output options
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-o / --output-format` | string | `plaintext` | Comma-separated format list |
+| `--output-file` | string | — | Base filename (extensions added automatically) |
+| `--gen-relay-list` | string | — | NTLMRelayX target list output file |
+| `-v / -vv / -vvv` | count | 0 | Verbosity level |
+
+### Performance
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--threads` | integer | 10 | Thread count |
+| `--timeout` | integer | 5 | Connection timeout in seconds |
+| `--max-scangroup` | integer | 0 (all) | Max hosts per scan group |
+| `--split-into` | integer | 1 | Split hosts into N groups |
+| `--skip` | integer | 0 | Skip first N groups |
+| `--ad-page-size` | integer | 500 | LDAP paged query size |

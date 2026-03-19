@@ -1,0 +1,112 @@
+---
+title: "Scan grouping"
+description: "Split large target sets into groups to control scan scope, resume partial scans, or distribute work across machines."
+---
+
+For large environments, RelayKing can divide the target list into groups and scan them sequentially. Each group produces its own output file (when `--output-file` is used). Grouping is controlled by two mutually exclusive flags and one skip flag.
+
+## `--max-scangroup N`
+
+Sets the maximum number of hosts per group. RelayKing calculates the required number of groups automatically.
+
+```bash
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --max-scangroup 100 --output-file scan
+```
+
+With 299 targets and `--max-scangroup 100`:
+
+| Group | Hosts |
+|-------|-------|
+| 0     | 100   |
+| 1     | 100   |
+| 2     | 99    |
+
+Output files:
+
+```
+scan_0.txt
+scan_1.txt
+scan_2.txt
+```
+
+## `--split-into N`
+
+Sets the total number of groups. RelayKing calculates the group size automatically.
+
+```bash
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --split-into 3 --output-file scan
+```
+
+With 299 targets and `--split-into 3`:
+
+| Group | Hosts |
+|-------|-------|
+| 0     | 100   |
+| 1     | 100   |
+| 2     | 99    |
+
+<Warning>
+  You cannot use `--max-scangroup` and `--split-into` at the same time. Specifying both will produce an error.
+</Warning>
+
+## `--skip N`
+
+Skips the first N groups and begins scanning from group N. Use this to restart from a specific point after an interruption, or to manually parallelize scanning across machines.
+
+```bash
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --max-scangroup 100 --skip 1 --output-file scan
+```
+
+With 299 targets, `--max-scangroup 100`, and `--skip 1`:
+
+- Group 0 (hosts 0–99): **skipped**
+- Group 1 (hosts 100–199): scanned
+- Group 2 (hosts 200–298): scanned
+
+## Practical use cases
+
+### Resuming after an interruption
+
+If the scan dies partway through group 1:
+
+```bash
+# Re-run from group 1
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --max-scangroup 100 --skip 1 --output-file scan
+```
+
+Output files from group 0 are preserved. Output from group 1 onward is written fresh.
+
+<Tip>
+  For `--audit` scans, use `--session-resume` instead of `--skip` when recovering from an interruption. Session resume tracks completed hosts within each group, so you do not lose any partial progress inside a group. See [Session resume](/guides/session-resume).
+</Tip>
+
+### Distributing across multiple machines
+
+Run three parallel scans on three machines, each covering a different slice of the target list:
+
+```bash
+# Machine 1: group 0 only
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --split-into 3 --skip 0 --max-scangroup 1 --output-file scan
+
+# Machine 2: group 1 only
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --split-into 3 --skip 1 --max-scangroup 1 --output-file scan
+
+# Machine 3: group 2 only
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --split-into 3 --skip 2 --max-scangroup 1 --output-file scan
+```
+
+### Limiting blast radius during testing
+
+Scan only the first 50 hosts to validate configuration before committing to a full run:
+
+```bash
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --max-scangroup 50 --split-into 1 --output-file scan-test
+```

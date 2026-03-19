@@ -1,0 +1,100 @@
+---
+title: "WebDAV/WebClient detection"
+description: "Detects hosts with the Windows WebClient service running. A host with WebClient active can be coerced via UNC paths to authenticate over HTTP, enabling coercion attacks against hosts that would otherwise only speak SMB."
+---
+
+The Windows WebClient service (`WebClient`) enables WebDAV functionality on a Windows host, allowing it to connect to WebDAV shares over HTTP. From an attacker's perspective, a host with WebClient running is **coercible via HTTP** — the host can be tricked into authenticating to an attacker-controlled WebDAV server using a UNC path, even when the target would not normally accept coercion over SMB.
+
+This detection is based on the technique published by [@tifkin_](https://twitter.com/tifkin_) and implemented in NetExec's `webdav` module.
+
+## Why WebClient matters for relay attacks
+
+Standard coercion attacks (PetitPotam, PrinterBug, DFSCoerce) send the coerced authentication over SMB (port 445). If the attacker's listener is also an SMB server, NTLM relay over SMB-to-SMB is blocked by the same-protocol relay restriction in modern Windows.
+
+When WebClient is running, you can coerce the target using a UNC path that resolves to port 80 (HTTP) instead of port 445 (SMB). The coerced authentication then arrives at your HTTP listener, and you can relay it to any protocol — including LDAP, LDAPS, or SMB on a different host. This bypasses the same-protocol restriction entirely.
+
+```
+Host with WebClient running:
+  Coerce via UNC path (\\attacker@80\share)  →  HTTP auth to attacker
+  Relay HTTP auth  →  LDAP / LDAPS / SMB on any other host
+```
+
+## Detection method
+
+RelayKing attempts to open the named pipe `DAV RPC SERVICE` in the `IPC$` share:
+
+1. An SMB connection is established to the target (authenticated or null session).
+2. RelayKing connects to `IPC$` and attempts to open `\pipe\DAV RPC SERVICE`.
+3. If the pipe is found, `WebClient` is running — the host is coercible via HTTP.
+4. If the server returns `STATUS_OBJECT_NAME_NOT_FOUND`, WebClient is not running.
+
+This works with both **authenticated** and **null sessions** — no elevated privileges are required.
+
+## What a positive finding means
+
+When RelayKing flags a host as WebDAV-enabled:
+
+- The host can be coerced via a `\\attacker@80\share` UNC path.
+- The resulting NTLM authentication arrives over HTTP at your listener.
+- You can relay that HTTP authentication to LDAP, LDAPS, SMB, or any other relay-vulnerable target.
+- Same-protocol relay restrictions do not apply because the source protocol is HTTP, not SMB.
+
+The relay path is recorded as:
+
+```
+Source: webdav  →  Destination: any
+Impact: HIGH
+Description: WebClient service enabled on <host> — can be coerced to authenticate
+  to attacker-controlled WebDAV share
+```
+
+## Severity
+
+**HIGH** — WebDAV coercion enables NTLM relay over HTTP, which bypasses same-protocol restrictions and significantly expands the viable relay target set.
+
+## Flags
+
+WebDAV detection runs automatically as part of every scan. No flag is required.
+
+| Behavior | Details |
+|---|---|
+| Runs automatically | Yes |
+| Auth required | No — null sessions work |
+| Port | 445 (SMB for pipe access) |
+
+## Example commands
+
+<Tabs>
+  <Tab title="Authenticated scan">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps -o plaintext,json \
+  --output-file relayking-scan --proto-portscan
+```
+  </Tab>
+  <Tab title="Unauthenticated sweep">
+```bash
+python3 relayking.py --null-auth -vv --protocols smb -o plaintext 10.0.0.0/24
+```
+
+WebDAV detection runs during the SMB scan pass. Null session is sufficient to check for the `DAV RPC SERVICE` pipe.
+  </Tab>
+</Tabs>
+
+## Operational use
+
+Once you identify a host with WebClient running, use the HTTP coercion path:
+
+```bash
+# 1. Start your relay listener on HTTP (port 80)
+ntlmrelayx.py -t ldap://<DC_IP> -smb2support
+
+# 2. Coerce the WebClient host via UNC path pointing to port 80
+#    (use PetitPotam, PrinterBug, or any other coercion tool)
+#    Target the listener as: \\<your_ip>@80\share
+```
+
+<Tip>
+WebDAV hosts are particularly valuable in environments where all SMB signing is enforced — they provide an HTTP-based coercion path that bypasses that protection entirely.
+</Tip>

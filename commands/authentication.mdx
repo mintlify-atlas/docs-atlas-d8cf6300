@@ -1,0 +1,123 @@
+---
+title: "Authentication options"
+description: "Flags for username/password, NTLM hashes, Kerberos, and domain controller configuration."
+---
+
+All authentication flags are optional when `--null-auth` is used. Otherwise, `-u/--username` and one of `-p`, `--hashes`, or `--aesKey` are required (except when using `-k/--kerberos` with `--no-pass`).
+
+## Flags
+
+<ParamField path="-u / --username" type="string">
+  Username for authentication. Required unless `--null-auth` is set.
+</ParamField>
+
+<ParamField path="-p / --password" type="string">
+  Password for authentication. One of `--password`, `--hashes`, or `--aesKey` is required unless using `--null-auth` or `-k --no-pass`.
+</ParamField>
+
+<ParamField path="-d / --domain" type="string">
+  Domain name (e.g., `corp.example.local`). Required when using `--audit` mode.
+</ParamField>
+
+<ParamField path="--hashes" type="string">
+  NTLM hashes in `LMHASH:NTHASH` format. The LM portion can be omitted or set to `aad3b435b51404eeaad3b435b51404ee` (empty LM). Used for pass-the-hash attacks.
+
+  **Format:** `[LM_HASH]:NT_HASH`
+</ParamField>
+
+<ParamField path="--aesKey" type="string">
+  AES-128 or AES-256 key for Kerberos authentication. Use instead of a password when you have an extracted AES key.
+</ParamField>
+
+<ParamField path="-k / --kerberos" type="boolean" default="false">
+  Use Kerberos authentication. Reads the ccache file from the `KRB5CCNAME` environment variable when available. Combine with `--no-pass` to avoid a password prompt when using a ccache.
+</ParamField>
+
+<ParamField path="--krb-dc-only" type="boolean" default="false">
+  Use Kerberos only for Domain Controllers; fall back to NTLM for all other hosts. RelayKing queries the AD `Domain Controllers` group to determine which hosts are DCs. Useful when DCs enforce Kerberos but workstations and member servers still accept NTLM.
+</ParamField>
+
+<ParamField path="--no-pass" type="boolean" default="false">
+  Do not prompt for a password. Use this with `-k/--kerberos` when authenticating via a ccache file.
+</ParamField>
+
+<ParamField path="--dc-ip" type="string">
+  IP address of a Domain Controller. Used for LDAP-based operations such as `--audit` and `--ntlmv1`. Also treated as a known DC target when `--krb-dc-only` is active.
+</ParamField>
+
+<ParamField path="-ns / --nameserver" type="string">
+  Custom DNS server for hostname resolution. Useful when running through a SOCKS proxy where the default resolver cannot reach internal DNS.
+</ParamField>
+
+<ParamField path="--dns-tcp" type="boolean" default="false">
+  Use TCP instead of UDP for DNS resolution. Useful when UDP is blocked or unreliable in the target environment.
+</ParamField>
+
+<ParamField path="--ldap" type="boolean" default="false">
+  Force LDAP (port 389) for directory operations. By default, RelayKing auto-detects whether to use LDAP or LDAPS.
+</ParamField>
+
+<ParamField path="--ldaps" type="boolean" default="false">
+  Force LDAPS (port 636) for directory operations.
+</ParamField>
+
+<ParamField path="--null-auth" type="boolean" default="false">
+  Attempt null/anonymous authentication. When set, `-u`, `-p`, and domain are not required. Coercion vulnerabilities (`--coerce`) are only reported as confirmed findings when the coercion succeeds under null auth.
+
+  <Note>Cannot be combined with `--coerce-all`, which requires credentials for AD enumeration.</Note>
+</ParamField>
+
+## Examples
+
+### Standard username and password
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local --dc-ip 10.0.0.1 --audit --protocols smb,ldap,ldaps
+```
+
+### Pass-the-hash (NTLM)
+
+```bash
+python3 relayking.py -u administrator -d corp.example.local \
+  --hashes aad3b435b51404eeaad3b435b51404ee:8846f7eaee8fb117ad06bdd830b7586c \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap
+```
+
+You can also omit the LM portion:
+
+```bash
+--hashes :8846f7eaee8fb117ad06bdd830b7586c
+```
+
+### Kerberos with a ccache file
+
+```bash
+export KRB5CCNAME=/tmp/krb5cc_lowpriv
+python3 relayking.py -u lowpriv -d corp.example.local --dc-ip 10.0.0.1 \
+  -k --no-pass --audit --protocols smb,ldap,ldaps
+```
+
+### Kerberos for DCs only
+
+Authenticate to Domain Controllers with Kerberos and use NTLM for all other hosts:
+
+```bash
+export KRB5CCNAME=/tmp/krb5cc_lowpriv
+python3 relayking.py -u lowpriv -d corp.example.local --dc-ip 10.0.0.1 \
+  -k --krb-dc-only --no-pass --audit --protocols smb,ldap,ldaps
+```
+
+### Null authentication
+
+Scan without credentials — useful for discovering open services and testing for anonymous access:
+
+```bash
+python3 relayking.py --null-auth --protocols smb,ldap 10.0.0.0/24
+```
+
+### Through a SOCKS proxy with custom DNS
+
+```bash
+proxychains python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 -ns 10.0.0.1 --dns-tcp --no-ping --audit --protocols smb,ldap,ldaps
+```

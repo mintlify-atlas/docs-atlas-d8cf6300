@@ -1,0 +1,115 @@
+---
+title: "LDAP/LDAPS detection"
+description: "How RelayKing detects LDAP signing requirements and LDAPS channel binding enforcement — the highest-value relay targets in an Active Directory environment."
+---
+
+LDAP and LDAPS are the highest-value NTLM relay targets in most Active Directory environments. Relaying to LDAP/LDAPS allows an attacker to write arbitrary attributes to AD objects — including adding themselves to privileged groups, setting RBCD, or performing a shadow credential attack. RelayKing checks both the plaintext LDAP port (389) for signing enforcement and the TLS LDAP port (636) for channel binding enforcement.
+
+## What is checked
+
+| Check | Port | Auth required | Notes |
+|---|---|---|---|
+| LDAP signing requirement | 389 | No | Probed by attempting a bind without signing using impacket; `strongerAuthRequired` error = signing enforced |
+| LDAPS channel binding | 636 | Yes (password) | Probed with ldap3 NTLM bind without CBT; `80090346` error = CBT enforced |
+| Anonymous bind | 389 / 636 | No | Tested in `--null-auth` mode |
+| DC identification | Both | Optional | Used for severity escalation in relay path analysis |
+
+<Note>
+LDAP signing is checked **before** authentication is attempted. The signing probe works regardless of whether credentials are valid — it uses the impacket `LDAPConnection` with `signing=False` and inspects whether the server returns a `strongerAuthRequired` error on an anonymous-domain bind.
+</Note>
+
+## Relay conditions
+
+```
+LDAP  + signing not required                    →  RELAYABLE  (CRITICAL)
+LDAPS + channel binding not enforced            →  RELAYABLE  (CRITICAL)
+LDAP  + signing not required + NTLMv1 enabled   →  RELAYABLE  (CRITICAL, cross-protocol)
+LDAPS + channel binding enforced                →  NOT relayable
+LDAP  + signing required                        →  NOT relayable
+```
+
+<Warning>
+Domain controllers with LDAP signing disabled are the **highest-value NTLM relay targets** in an environment. A successful relay to LDAP on a DC allows attribute writes that can lead directly to domain compromise (shadow credentials, RBCD, DCSync-enabled group membership).
+</Warning>
+
+## Signing check detail
+
+The signing probe uses impacket's `LDAPConnection` with `signing=False` and calls `login(domain=...)` with no password. The possible outcomes are:
+
+| Server response | `signing_required` value | Meaning |
+|---|---|---|
+| Bind succeeds | `False` | Signing not required — relay-vulnerable |
+| `strongerAuthRequired` error | `True` | Signing enforced |
+| NTLM disabled error | `None` | Cannot determine (NTLM auth unavailable on this server) |
+| Any other error | `None` | Unknown — treated conservatively as not relay-able |
+
+## Channel binding check detail (LDAPS)
+
+The LDAPS channel binding check uses ldap3 (not impacket) because ldap3 does **not** automatically calculate and attach channel binding tokens — which means a successful bind confirms the server does not enforce CBT.
+
+| Outcome | `channel_binding` value | Meaning |
+|---|---|---|
+| Bind succeeds | `False` | CBT not enforced — relay-vulnerable |
+| Error `80090346` (`SEC_E_BAD_BINDINGS`) | `True` | CBT enforced |
+| Error `52e` (invalid credentials) | `False` | Bad creds but CBT not the issue |
+| Any other error / no password | `None` | Unknown — treated conservatively as not relay-able |
+
+<Note>
+The LDAPS channel binding check requires a **password**. It cannot be performed with `--null-auth` or pass-the-hash (NT hash only) credentials, because ldap3 does not natively support pass-the-hash for NTLM. In those cases `channel_binding` is set to `None` and a note is recorded in `additional_info`.
+</Note>
+
+## Flags and ports
+
+| Parameter | Value |
+|---|---|
+| `--protocols` value | `ldap`, `ldaps` |
+| Default port (LDAP) | `389` |
+| Default port (LDAPS) | `636` |
+| Auth required | No for signing check; password required for LDAPS CBT check |
+
+## Example commands
+
+<Tabs>
+  <Tab title="Full audit including LDAP/LDAPS">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --gen-relay-list relaytargets.txt
+```
+  </Tab>
+  <Tab title="LDAP/LDAPS only, no HTTP">
+```bash
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --gen-relay-list relaytargets.txt
+```
+
+Lighter scan that skips HTTP path enumeration. Recommended when HTTP scanning is not in scope.
+  </Tab>
+  <Tab title="Unauthenticated signing sweep">
+```bash
+python3 relayking.py --null-auth -vv --protocols smb,ldap,http -o plaintext 10.0.0.0/24
+```
+
+Checks LDAP signing without credentials. LDAPS channel binding cannot be tested in `--null-auth` mode.
+  </Tab>
+</Tabs>
+
+## Severity
+
+Relay path analysis assigns the following severities to LDAP/LDAPS findings:
+
+| Finding | Severity |
+|---|---|
+| DC with LDAP signing not required | CRITICAL |
+| DC with LDAPS channel binding not enforced | CRITICAL |
+| Non-DC with LDAP signing not required | HIGH |
+| Non-DC with LDAPS channel binding not enforced | HIGH |
+
+DC findings are escalated because relaying to LDAP on a DC gives write access to the most sensitive AD objects in the domain.

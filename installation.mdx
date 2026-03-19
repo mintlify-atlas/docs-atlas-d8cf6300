@@ -1,0 +1,102 @@
+---
+title: "Installation"
+description: "Set up RelayKing in a Python virtual environment and verify your installation."
+---
+
+<Warning>
+  Always use a virtualenv. Save yourself the hassle.
+</Warning>
+
+## Prerequisites
+
+Before installing RelayKing, ensure the following are available on your system:
+
+- **Python 3.8+** — RelayKing requires Python 3.8 or later.
+- **git** — Used to clone the repository.
+- **virtualenv** — Used to create an isolated Python environment.
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the RelayKing repository from GitHub:
+
+    ```bash
+    git clone https://github.com/depthsecurity/RelayKing-Depth.git
+    ```
+  </Step>
+
+  <Step title="Navigate into the cloned directory">
+    ```bash
+    cd RelayKing-Depth/
+    ```
+  </Step>
+
+  <Step title="Create a virtual environment">
+    Use `virtualenv` to create an isolated Python 3 environment inside the project directory. This prevents dependency conflicts with system packages.
+
+    ```bash
+    virtualenv --python=python3 .
+    ```
+  </Step>
+
+  <Step title="Activate the virtual environment">
+    ```bash
+    source bin/activate
+    ```
+
+    Your shell prompt should now be prefixed with the environment name, confirming the venv is active.
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all required Python packages from `requirements.txt`:
+
+    ```bash
+    pip3 install -r requirements.txt
+    ```
+  </Step>
+
+  <Step title="Verify the installation">
+    Confirm RelayKing launches correctly by printing the help menu:
+
+    ```bash
+    python3 relayking.py -h
+    ```
+
+    You should see the full argument reference output.
+  </Step>
+
+  <Step title="Optional: Run the verification script">
+    For a deeper check, run the bundled `verify_installation.py` script. It validates your Python version, all dependency imports, RelayKing's internal modules, and the syntax of every `.py` file in the project:
+
+    ```bash
+    python3 verify_installation.py
+    ```
+
+    A successful run ends with:
+
+    ```
+    [+] All checks passed! RelayKing is ready to use.
+    ```
+
+    If any check fails, install the missing packages:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+</Steps>
+
+## Dependencies
+
+The following packages are installed from `requirements.txt`:
+
+| Package | Minimum Version | Purpose |
+|---|---|---|
+| `impacket` | >=0.11.0 | SMB, LDAP, MSSQL protocol implementations |
+| `requests` | >=2.28.0 | HTTP/HTTPS scanning |
+| `requests-ntlm` | >=1.2.0 | NTLM authentication over HTTP |
+| `dnspython` | >=2.3.0 | DNS resolution for hostname lookups |
+| `ldap3` | >=2.9.1 | LDAP operations and AD enumeration |
+| `pyasn1` | >=0.4.8 | ASN.1 encoding (Kerberos/LDAP) |
+| `urllib3` | >=1.26.0 | HTTP client internals |

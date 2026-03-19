@@ -1,0 +1,114 @@
+---
+title: "Output options"
+description: "Flags that control where RelayKing writes results: output formats, file naming, relay target lists, and verbosity."
+---
+
+## Flags
+
+<ParamField path="-o / --output-format" type="string" default="plaintext">
+  Comma-separated list of output formats to produce. Multiple formats can be specified together; each produces a separate file when `--output-file` is set.
+
+  Available formats: `plaintext`, `json`, `xml`, `csv`, `grep`, `markdown`
+</ParamField>
+
+<ParamField path="--output-file" type="string">
+  Base filename for output. RelayKing appends the appropriate extension for each format automatically. Without this flag, results are written to stdout only.
+
+  **Extension mapping:**
+
+  | Format | Extension |
+  |--------|-----------|
+  | `plaintext` | `.txt` |
+  | `json` | `.json` |
+  | `xml` | `.xml` |
+  | `csv` | `.csv` |
+  | `grep` | `.grep` |
+  | `markdown` | `.md` |
+</ParamField>
+
+<ParamField path="--gen-relay-list" type="string">
+  Path to a file where RelayKing writes a list of relayable targets in URI format, suitable for use directly with [ntlmrelayx](https://github.com/fortra/impacket). Each line is a target URI.
+
+  Example output:
+
+  ```text
+  smb://dc01.corp.example.local
+  smb://fileserver01.corp.example.local
+  ldap://dc01.corp.example.local
+  ldaps://dc02.corp.example.local
+  http://intranet.corp.example.local
+  ```
+</ParamField>
+
+<ParamField path="-v / --verbose" type="count" default="0">
+  Increase output verbosity. Repeat the flag to raise the level:
+
+  | Flag | Level | Effect |
+  |------|-------|--------|
+  | _(none)_ | 0 | Findings only |
+  | `-v` | 1 | Findings + high-level progress |
+  | `-vv` | 2 | Findings + per-host status |
+  | `-vvv` | 3 | Full debug output |
+</ParamField>
+
+## Output format details
+
+**`plaintext`** — Human-readable report, suitable for viewing in a terminal or sharing as a text attachment.
+
+**`json`** — Structured JSON, suitable for programmatic processing or importing into other tools.
+
+**`xml`** — XML report, compatible with tools that consume XML vulnerability output.
+
+**`csv`** — Comma-separated values for spreadsheet import.
+
+**`grep`** — Single-line-per-finding format designed for `grep` and shell pipelines.
+
+**`markdown`** — Markdown report ready to paste into a wiki or report document.
+
+## Examples
+
+### Write multiple formats from a single scan
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap,ldaps,mssql,http,https \
+  --proto-portscan -o plaintext,json --output-file relayking-scan
+```
+
+This produces two files:
+- `relayking-scan.txt` — plaintext report
+- `relayking-scan.json` — JSON report
+
+### Generate all formats
+
+```bash
+-o plaintext,json,xml,csv,grep,markdown --output-file relayking-scan
+```
+
+Produces: `relayking-scan.txt`, `relayking-scan.json`, `relayking-scan.xml`, `relayking-scan.csv`, `relayking-scan.grep`, `relayking-scan.md`
+
+### Generate a relay list for ntlmrelayx
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap,ldaps \
+  --proto-portscan --gen-relay-list relaytargets.txt \
+  -o plaintext,json --output-file relayking-scan
+```
+
+Then use the relay list with ntlmrelayx:
+
+```bash
+ntlmrelayx.py -tf relaytargets.txt -smb2support
+```
+
+### Recommended full scan with output
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 --proto-portscan --ntlmv1 \
+  --gen-relay-list relaytargets.txt \
+  -o plaintext,json --output-file relayking-scan
+```

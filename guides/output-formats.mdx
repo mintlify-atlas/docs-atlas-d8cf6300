@@ -1,0 +1,250 @@
+---
+title: "Output formats"
+description: "RelayKing supports six output formats. Use multiple formats simultaneously with a single scan."
+---
+
+RelayKing supports six output formats. The default is `plaintext`. Specify a format with `-o` / `--output-format`.
+
+## Producing multiple formats at once
+
+Pass a comma-separated list of formats to `-o` and specify a base filename with `--output-file`. RelayKing writes one file per format, appending the appropriate extension:
+
+```bash
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit -o plaintext,json,csv --output-file relayking-scan
+```
+
+This produces:
+
+```
+relayking-scan.txt
+relayking-scan.json
+relayking-scan.csv
+```
+
+## File extension mapping
+
+| Format    | Extension |
+|-----------|-----------|
+| plaintext | `.txt`    |
+| json      | `.json`   |
+| xml       | `.xml`    |
+| csv       | `.csv`    |
+| grep      | `.grep`   |
+| markdown  | `.md`     |
+
+## Format details
+
+<Tabs>
+  <Tab title="plaintext">
+    Human-readable output with labeled sections, a summary block, relay paths sorted by severity, and per-host protocol detail. This is the default format.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o plaintext
+    ```
+
+    Example output structure:
+
+    ```
+    ================================================================================
+    RelayKing Scan Results
+    ================================================================================
+
+    SUMMARY
+    --------------------------------------------------------------------------------
+    Total Hosts Scanned:    147
+    Relayable Hosts:        23
+    Critical Relay Paths:   4
+    High Risk Paths:        11
+    Medium Risk Paths:      8
+    Low Risk Paths:         2
+    Scan Duration:          142.37 seconds
+
+    RELAY ATTACK PATHS
+    --------------------------------------------------------------------------------
+    [CRITICAL] Relay to LDAP on dc01.corp.local / 10.0.0.1 - Can create computer accounts, modify ACLs (RBCD, DACL abuse)
+    [HIGH] Relay to SMB on fileserver01.corp.local / 10.0.0.20 - File system access, potential code execution via services
+
+    DETAILED HOST RESULTS
+    ================================================================================
+
+    Host: dc01.corp.local
+    --------------------------------------------------------------------------------
+      [LDAP] RELAYABLE
+        Version: Windows Server 2022
+        Signing Required: False
+        Channel Binding: False
+      [SMB] PROTECTED
+        Version: SMB 3.1.1
+        Signing Required: True
+    ```
+  </Tab>
+
+  <Tab title="json">
+    Structured JSON output for programmatic analysis, pipeline integration, or import into other tooling.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o json --output-file scan
+    ```
+
+    Example output structure:
+
+    ```json
+    {
+      "targets": ["dc01.corp.local", "fileserver01.corp.local"],
+      "statistics": {
+        "total_hosts": 147,
+        "relayable_hosts": 23,
+        "critical_paths": 4,
+        "high_paths": 11,
+        "medium_paths": 8,
+        "low_paths": 2
+      },
+      "relay_paths": [
+        {
+          "source_host": "dc01.corp.local",
+          "source_ip": "10.0.0.1",
+          "source_protocol": "any",
+          "dest_host": "dc01.corp.local",
+          "dest_ip": "10.0.0.1",
+          "dest_protocol": "ldap",
+          "impact": "CRITICAL",
+          "description": "Relay to LDAP on dc01.corp.local - Can create computer accounts, modify ACLs",
+          "ntlmv1_required": false
+        }
+      ],
+      "host_results": {
+        "dc01.corp.local": {
+          "ldap": {
+            "available": true,
+            "signing_required": false,
+            "channel_binding": false,
+            "version": "Windows Server 2022"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="xml">
+    Hierarchical XML output, useful for integration with enterprise reporting tools or XSLT-based processing.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o xml --output-file scan
+    ```
+
+    Example output structure:
+
+    ```xml
+    <?xml version="1.0" ?>
+    <relayking_scan>
+      <statistics>
+        <total_hosts>147</total_hosts>
+        <relayable_hosts>23</relayable_hosts>
+        <critical_paths>4</critical_paths>
+        <high_paths>11</high_paths>
+      </statistics>
+      <relay_paths>
+        <path impact="CRITICAL">
+          <source_host>dc01.corp.local</source_host>
+          <source_ip>10.0.0.1</source_ip>
+          <source_protocol>any</source_protocol>
+          <dest_host>dc01.corp.local</dest_host>
+          <dest_ip>10.0.0.1</dest_ip>
+          <dest_protocol>ldap</dest_protocol>
+          <description>Relay to LDAP on dc01.corp.local - Can create computer accounts, modify ACLs</description>
+        </path>
+      </relay_paths>
+      <hosts>
+        <host name="dc01.corp.local" ip="10.0.0.1">
+          <protocol name="ldap" available="True" signing_required="False" />
+        </host>
+      </hosts>
+    </relayking_scan>
+    ```
+  </Tab>
+
+  <Tab title="csv">
+    Spreadsheet-compatible format. Each row is one protocol result for one host. Useful for filtering and sorting findings in Excel or similar tools.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o csv --output-file scan
+    ```
+
+    Example output structure:
+
+    ```
+    Host,IP,Protocol,Available,Signing Required,EPA Enforced,Channel Binding,NTLMv1 Supported,Anonymous Allowed,Version,Relayable
+    dc01.corp.local,10.0.0.1,ldap,True,False,,,,,Windows Server 2022,True
+    dc01.corp.local,10.0.0.1,smb,True,True,,False,,,SMB 3.1.1,False
+    fileserver01.corp.local,10.0.0.20,smb,True,False,,False,,,SMB 3.0,True
+    ```
+  </Tab>
+
+  <Tab title="grep">
+    One result per line for shell pipeline processing. Host results use colon-separated fields; relay paths are prefixed with `RELAY:`.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o grep --output-file scan
+    ```
+
+    Example output structure:
+
+    ```
+    dc01.corp.local:10.0.0.1:ldap:RELAYABLE:signing=False
+    dc01.corp.local:10.0.0.1:smb:PROTECTED:signing=True
+    fileserver01.corp.local:10.0.0.20:smb:RELAYABLE:signing=False
+    RELAY:dc01.corp.local:10.0.0.1:any:dc01.corp.local:10.0.0.1:ldap:CRITICAL
+    RELAY:fileserver01.corp.local:10.0.0.20:any:fileserver01.corp.local:10.0.0.20:smb:HIGH
+    ```
+
+    Filter for relayable hosts only:
+
+    ```bash
+    grep ':RELAYABLE:' scan.grep
+    ```
+
+    Extract only relay paths:
+
+    ```bash
+    grep '^RELAY:' scan.grep
+    ```
+  </Tab>
+
+  <Tab title="markdown">
+    Documentation-ready Markdown with tables. Suitable for inclusion in pentest reports or wikis.
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d corp.local --audit -o markdown --output-file scan
+    ```
+
+    Example output structure:
+
+    ```
+    # RelayKing Scan Results
+
+    ## Summary
+
+    - **Total Hosts Scanned**: 147
+    - **Relayable Hosts**: 23
+    - **Critical Relay Paths**: 4
+    - **High Risk Paths**: 11
+    - **Medium Risk Paths**: 8
+    - **Low Risk Paths**: 2
+
+    ## Relay Attack Paths
+
+    | Impact | Source | Source IP | Protocol | Destination | Dest IP | Description |
+    |--------|--------|-----------|----------|-------------|---------|-------------|
+    | **CRITICAL** | dc01.corp.local | 10.0.0.1 | any → ldap | dc01.corp.local | 10.0.0.1 | Relay to LDAP on dc01.corp.local - Can create computer accounts, modify ACLs |
+
+    ## Host Results
+
+    | Host | Protocol | Status | Signing | EPA | Channel Binding |
+    |------|----------|--------|---------|-----|-----------------|
+    | dc01.corp.local | LDAP | **RELAYABLE** | False | N/A | False |
+    | dc01.corp.local | SMB | PROTECTED | True | N/A | False |
+    ```
+  </Tab>
+</Tabs>

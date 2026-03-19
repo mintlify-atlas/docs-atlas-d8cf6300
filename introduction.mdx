@@ -1,0 +1,104 @@
+---
+title: "RelayKing"
+description: "Dominate the domain. Relay to royalty. A comprehensive NTLM & Kerberos relay detection tool for Active Directory environments."
+---
+
+<img
+  src="https://raw.githubusercontent.com/depthsecurity/RelayKing-Depth/main/RelayKing-Banner.png"
+  alt="RelayKing Banner"
+  style={{ borderRadius: '8px', width: '100%' }}
+/>
+
+## What is RelayKing?
+
+**RelayKing** is a comprehensive relay detection and enumeration tool designed to identify relay attack opportunities in Active Directory environments. It performs deep protocol analysis across SMB, LDAP, HTTP, MSSQL, RPC, and more — automatically mapping viable relay attack paths and prioritizing them by impact.
+
+Feed Impacket's `ntlmrelayx.py` a curated target list of detected, relay-able hosts. Never miss a critical, exploitable NTLM relay path in the domain again.
+
+<Warning>
+RelayKing is NOT an OPSEC-friendly tool in certain modes, particularly in `--audit` mode. Use with caution on red team engagements. Always have written authorization before running against any network.
+</Warning>
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Protocol Detection" icon="network-wired" href="/protocols/smb">
+    Detect relay vulnerabilities across SMB, HTTP/S, LDAP/S, MSSQL, RPC, SMTP, IMAP, and WinRM — with and without authentication.
+  </Card>
+  <Card title="AD Audit Mode" icon="building-columns" href="/guides/audit-mode">
+    Enumerate all computers from Active Directory via LDAP with low-privilege credentials and scan the entire domain automatically.
+  </Card>
+  <Card title="Relay Path Analysis" icon="diagram-project" href="/guides/relay-path-analysis">
+    Automatically identify and prioritize viable relay attack paths by severity — Critical, High, Medium, and Low.
+  </Card>
+  <Card title="CVE Detection" icon="bug" href="/advanced/cve-2025-54918">
+    Detect CVE-2025-54918, CVE-2019-1040 (Drop the MIC), NTLM reflection, and Ghost SPN vulnerabilities via UBR checks.
+  </Card>
+  <Card title="Coercion Detection" icon="bolt" href="/advanced/coercion">
+    Identify PetitPotam, PrinterBug, and DFSCoerce coercion vulnerabilities. Mass-coerce with `--coerce-all` for NTLMv1 environments.
+  </Card>
+  <Card title="Relay List Generation" icon="list" href="/guides/relay-list-generation">
+    Generate NTLMRelayX-compatible target lists in URI format, ready for direct use with ntlmrelayx.py's `-tf` flag.
+  </Card>
+  <Card title="Multiple Output Formats" icon="file-export" href="/guides/output-formats">
+    Output findings as plaintext, JSON, XML, CSV, grep-able, or Markdown. Run once, get all formats simultaneously.
+  </Card>
+  <Card title="Session Resume" icon="rotate" href="/guides/session-resume">
+    Resume interrupted scans from where they left off using persistent session files. Critical for large domain audits.
+  </Card>
+</CardGroup>
+
+## Quick example
+
+Run a full-domain audit with recommended flags:
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --ntlmv1 \
+  --gen-relay-list relaytargets.txt
+```
+
+## How it works
+
+<Steps>
+  <Step title="Target acquisition">
+    RelayKing accepts individual hosts, CIDR ranges, IP ranges, target files, or enumerates all computers from Active Directory in `--audit` mode using low-privilege LDAP credentials.
+  </Step>
+  <Step title="Protocol scanning">
+    For each target, RelayKing checks configured protocols for relay-relevant configuration: signing requirements, EPA enforcement, channel binding, and authentication support. Use `--proto-portscan` to skip closed ports and dramatically speed up scans.
+  </Step>
+  <Step title="Advanced detection">
+    Specialized modules detect NTLM reflection, WebDAV/WebClient, coercion vulnerabilities (PetitPotam, PrinterBug, DFSCoerce), CVEs via UBR registry reads, Ghost SPNs, and NTLMv1 support.
+  </Step>
+  <Step title="Relay path analysis">
+    The relay analyzer cross-references scan results to identify viable attack paths, assigns severity ratings (Critical → Low), and produces a prioritized report of exploitable relay opportunities.
+  </Step>
+  <Step title="Output">
+    Results are written in your chosen format(s). Optionally generate a relay target list in URI format, ready for ntlmrelayx.py's `-tf` flag.
+  </Step>
+</Steps>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Clone the repo, set up a virtualenv, and install dependencies.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first scan in minutes with real-world examples.
+  </Card>
+</CardGroup>
+
+## Credits
+
+RelayKing is developed and maintained by **[Depth Security](https://www.depthsecurity.com/)** with inspiration from the broader infosec community, including RelayInformer (Nick Powers / SpecterOps), NetExec, Impacket, krbrelayx, Certipy-AD, SCCMHunter, and GhostSPN.

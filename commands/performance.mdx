@@ -1,0 +1,119 @@
+---
+title: "Performance options"
+description: "Flags that control threading, connection timeouts, scan grouping, and LDAP page sizes."
+---
+
+## Flags
+
+<ParamField path="--threads" type="integer" default="10">
+  Number of main scanner threads. Each main thread spawns additional per-protocol worker threads internally. The effective concurrency is higher than this value — for example, the HTTP scanner uses 20 worker threads per main thread, so with `--threads 10` there can be up to ~200 concurrent HTTP connections.
+</ParamField>
+
+<ParamField path="--timeout" type="integer" default="5">
+  Connection timeout in seconds for each protocol check. Increase this value on high-latency networks or when scanning through a SOCKS proxy. Decrease it to speed up scans against known-responsive networks.
+</ParamField>
+
+<ParamField path="--max-scangroup" type="integer" default="0">
+  Split the target list into groups of at most N hosts and scan one group at a time. A value of `0` (the default) places all hosts in a single group.
+
+  **Example:** `--max-scangroup 100` with 299 targets produces three groups: 100 / 100 / 99.
+
+  Cannot be combined with `--split-into`.
+</ParamField>
+
+<ParamField path="--split-into" type="integer" default="1">
+  Split the target list into exactly N equally-sized groups and scan one group at a time. A value of `1` (the default) places all hosts in a single group.
+
+  **Example:** `--split-into 3` with 299 targets produces three groups: 100 / 100 / 99.
+
+  Cannot be combined with `--max-scangroup`.
+</ParamField>
+
+<ParamField path="--skip" type="integer" default="0">
+  Skip the first N scan groups. Use this to resume a partially completed scan without a `.resume` file, or to distribute a scan across multiple machines by skipping groups already handled elsewhere.
+
+  **Example:** `--split-into 3 --skip 1` scans groups 2 and 3, skipping group 1.
+</ParamField>
+
+<ParamField path="--ad-page-size" type="integer" default="500">
+  Number of AD objects retrieved per LDAP page during enumeration of computer accounts and SPNs. Reduce this value if the DC enforces a lower maximum page size or if large page requests cause timeouts.
+</ParamField>
+
+## Threading model
+
+RelayKing uses a two-level threading model:
+
+- **Main threads** (`--threads`): Control the number of host-level workers processing targets in parallel.
+- **Protocol worker threads**: Each main thread spawns protocol-specific sub-threads. HTTP and HTTPS scanners, for example, use 20 worker threads per main thread.
+
+With the default `--threads 10`, the scanner can maintain up to approximately 200 concurrent HTTP connections. Increasing `--threads` multiplies this concurrency proportionally.
+
+<Note>
+  Enabling `--proto-portscan` typically has a larger impact on total scan time than increasing `--threads`, because it eliminates connection attempts to closed ports entirely. Use `--proto-portscan` before tuning thread counts.
+</Note>
+
+## Scan grouping
+
+Scan groups let you process a large target list in batches — useful for controlling network load, resuming a scan from a known checkpoint, or splitting work across multiple machines.
+
+### Using `--max-scangroup`
+
+Sets the maximum number of hosts per group. RelayKing creates as many groups as needed.
+
+```bash
+# 299 targets → groups of 100, 100, 99
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap --max-scangroup 100
+```
+
+### Using `--split-into`
+
+Sets the exact number of groups. RelayKing distributes hosts evenly.
+
+```bash
+# 299 targets → 3 groups of 100, 100, 99
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap --split-into 3
+```
+
+### Resuming with `--skip`
+
+Skip groups that have already been scanned:
+
+```bash
+# Scan only group 3 of 3 (skip groups 1 and 2)
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit --protocols smb,ldap --split-into 3 --skip 2
+```
+
+### Distributing across machines
+
+Run three parallel scans on separate machines, each handling one group:
+
+```bash
+# Machine 1 — group 1
+python3 relayking.py ... --split-into 3 --skip 0
+
+# Machine 2 — group 2
+python3 relayking.py ... --split-into 3 --skip 1
+
+# Machine 3 — group 3
+python3 relayking.py ... --split-into 3 --skip 2
+```
+
+<Warning>
+  `--max-scangroup` and `--split-into` are mutually exclusive. Specifying both causes RelayKing to exit with an error.
+</Warning>
+
+## Example: large environment tuning
+
+```bash
+python3 relayking.py -u lowpriv -p 'Summer2024!' -d corp.example.local \
+  --dc-ip 10.0.0.1 --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --proto-portscan \
+  --threads 15 --timeout 8 \
+  --max-scangroup 200 \
+  --ad-page-size 250 \
+  -o plaintext,json --output-file relayking-scan -vv
+```

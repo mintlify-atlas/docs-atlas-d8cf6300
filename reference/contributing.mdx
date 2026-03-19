@@ -1,0 +1,66 @@
+---
+title: "Contributing"
+description: "How to report issues and submit pull requests to RelayKing."
+---
+
+RelayKing is developed and maintained by [Depth Security](https://www.depthsecurity.com/). The repository is at [github.com/depthsecurity/RelayKing-Depth](https://github.com/depthsecurity/RelayKing-Depth).
+
+<CardGroup cols={2}>
+  <Card title="Issues" icon="circle-exclamation">
+    Report bugs, unexpected behavior, or edge cases that should be handled gracefully.
+  </Card>
+  <Card title="Pull requests" icon="code-pull-request">
+    Submit new features, improvements, and performance refactors. Always welcome.
+  </Card>
+</CardGroup>
+
+## Reporting issues
+
+<Warning>
+  Issues opened without sufficient detail ("this doesn't work" / "why no work") will be closed without investigation.
+</Warning>
+
+Before opening an issue:
+
+1. **Run with `-vv` or `-vvv`** to capture detailed debug output. Most errors become clear with increased verbosity, and this output is required for the maintainer to diagnose the problem.
+
+   ```bash
+   python3 relayking.py -u user -p pass -d domain.local --dc-ip 10.0.0.1 --audit --protocols smb,ldap -vvv
+   ```
+
+2. **Redact sensitive information** before pasting any output. Remove client and target domain names, machine names, IP addresses, and any other information you would not want to make public.
+
+3. **Include the exact command** that produced the issue. The usage arguments are required to reproduce the problem.
+
+### What will be closed
+
+Issues arising from user error or misconfigured environments will be reviewed and likely closed. Common examples:
+
+- RelayKing fails to resolve hosts in `--audit` mode because the testing host's DNS is not pointed at the domain's DNS server.
+- Scan failures caused by not configuring `/etc/resolv.conf` correctly before running.
+- Any other PEBKAC (problem exists between keyboard and chair) error.
+
+### What is a valid issue
+
+The exception to the above: if RelayKing **should** handle an environment-specific quirk gracefully and instead crashes or throws an unhandled exception, that **is** a valid issue. If the tool encounters an edge case and exits with a stack trace when it should report a clean error and continue, open the issue with the full `-vvv` output.
+
+## Pull requests
+
+PRs are always welcome. The goal is to keep RelayKing reliable, robust, and high-performance — all contributions are evaluated with that standard in mind.
+
+### What is welcome
+
+- New protocol detection modules or improvements to existing detection logic
+- Performance improvements and refactors
+- Bug fixes, especially for items listed in [Known issues](/reference/known-issues)
+- Feature requests submitted as PRs with a description of the feature, expected behavior, and the proposed usage flags
+
+### Requirements for PRs
+
+- **Test thoroughly before submitting.** PRs should be tested in multiple environments, especially after significant changes or refactoring. The maintainer will also test before merging, but broader pre-submission testing produces better results.
+- **Include a description** of what the PR does, why it is needed, and any relevant usage flags or behavioral changes.
+- **Feature request PRs** must include at minimum: a description of the feature, the specific behavior it introduces, and the proposed command-line flags.
+
+<Note>
+  PRs addressing severity rating logic improvements for relay path analysis are specifically encouraged. The current logic does not cover all primitives and scenarios — see [Known issues](/reference/known-issues) for details.
+</Note>

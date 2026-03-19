@@ -1,0 +1,85 @@
+---
+title: "Relay path analysis"
+description: "How RelayKing identifies, prioritizes, and presents viable NTLM relay attack paths after scanning."
+---
+
+After each scan group completes, RelayKing automatically runs relay path analysis across all collected results. No additional flags are required — the analyzer runs as part of every scan.
+
+## How paths are identified
+
+The analysis follows a six-step algorithm:
+
+1. **Identify sources** — Protocols without signing or Extended Protection for Authentication (EPA) enforcement are candidates for coerced or captured authentication.
+2. **Identify destinations** — Protocols that are accessible and relayable on each host become potential relay destinations.
+3. **Cross-reference** — Sources are matched to viable destinations to form candidate paths.
+4. **Prioritize** — Each path is assigned an impact level based on the destination protocol and host role.
+5. **Filter** — Impossible or redundant paths are removed (e.g., non-Windows hosts are skipped; cross-protocol SMB paths are omitted unless NTLMv1 is confirmed).
+6. **Output** — Paths are sorted by priority and presented in the report.
+
+## Severity levels
+
+### CRITICAL
+
+- Relay to **LDAP or LDAPS** without signing/channel binding protections — enables computer account creation, ACL modification, RBCD abuse, and domain compromise.
+- Relay to **HTTP/HTTPS** on an ADCS server (`/certsrv/`) or confirmed tier-0 asset — certificate enrollment abuse (ESC8) leading to domain compromise.
+- **CVE-2025-54918** on an unpatched Server 2025 **DC with PrintSpooler enabled** — RPC coercion → LDAPS reflection bypassing channel binding.
+- **NTLMv1 cross-protocol relay** to LDAP or LDAPS — NTLMv1 lacks MIC support, enabling relay with `--remove-mic` even when signing is enforced.
+
+### HIGH
+
+- Relay to **SMB** without signing — file system access, potential code execution via services.
+- Relay to **MSSQL** without EPA — database access, potential code execution via `xp_cmdshell`.
+- **CVE-2019-1040 (Drop the MIC)** — unpatched host allows MIC stripping for SMB-to-LDAP/LDAPS cross-protocol relay using `ntlmrelayx --remove-mic`. Reported as HIGH.
+- **WebClient service enabled** — the host can be coerced to authenticate to an attacker-controlled WebDAV share.
+
+### MEDIUM
+
+- Relay to **HTTP/HTTPS** without EPA on a non-tier-0 host — application access with no channel binding protection.
+- **CVE-2025-54918** on any unpatched Server 2025 host (non-DC, or DC without confirmed PrintSpooler) — vulnerable to NTLM reflection.
+- **Ghost SPN paths** — SPN registered to an account whose hostname has no DNS record; registering the missing name intercepts NTLM authentication.
+
+### LOW
+
+- Other protocols (SMTP, IMAP, WinRM, RPC) that are accessible but have limited relay impact in typical scenarios.
+
+### Cross-host relay
+
+When the source and destination hosts are different, the path receives a one-level severity bump (e.g., HIGH → CRITICAL). This reflects the increased practical impact of cross-host relay attacks.
+
+## CVE-specific paths
+
+### CVE-2025-54918
+
+RelayKing checks the Update Build Revision (UBR) read from each host's registry during scanning. Windows Server 2025 hosts with build 26100 and UBR below 6584 are flagged as unpatched.
+
+- Any unpatched Server 2025 host → **MEDIUM**
+- Unpatched Server 2025 DC with PrintSpooler enabled → **CRITICAL** (RPC coercion → LDAPS reflection)
+
+### CVE-2019-1040 (Drop the MIC)
+
+Hosts below the June 2019 patch threshold are flagged **HIGH**. The MIC field can be stripped from NTLM messages, enabling cross-protocol relay from SMB to LDAP or LDAPS. Use `ntlmrelayx --remove-mic` to exploit this path.
+
+## NTLM reflection paths
+
+CVE-2025-33073 covers hosts where SMB authentication can be relayed back to other services on the same host. When detected, RelayKing reports the specific protocols involved (e.g., `SMB → LDAP/HTTPS`) as a **HIGH** severity path.
+
+## Cross-protocol SMB relay paths
+
+<Note>
+  Cross-protocol SMB relay paths (SMB → LDAP) are only shown when `--ntlmv1` or `--ntlmv1-all` is used and NTLMv1 usage is actually confirmed. NTLMv2 includes a Message Integrity Code (MIC) that prevents cross-protocol relay. Without confirmed NTLMv1, these paths are not generated.
+</Note>
+
+When NTLMv1 is enabled (LmCompatibilityLevel ≤ 2), the MIC is not computed, making cross-protocol relay possible:
+
+- **SMB → LDAP** with `--remove-mic` — can create computer accounts, modify ACLs.
+- **SMB → LDAPS** with `--remove-mic` — same impact, encrypted channel.
+
+## Ghost SPN paths
+
+Ghost SPN findings are injected as **MEDIUM** severity paths. Up to five findings are shown in the main report; the full list is written to `possible-ghost-spns.txt`. Each path identifies the SPN, the account it is registered to, and the missing hostname that an attacker could register.
+
+## Severity logic
+
+<Note>
+  The severity rating logic is a work in progress. Not all scenarios and protocol combinations are accounted for. The goal is to cover all known relay primitives — contributions and pull requests for edge cases are welcome.
+</Note>

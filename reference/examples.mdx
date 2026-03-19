@@ -1,0 +1,248 @@
+---
+title: "Examples"
+description: "Real-world RelayKing command examples for common engagement scenarios."
+---
+
+All examples use `python3 relayking.py` as the entry point. Adjust credentials, domain, and DC IP to match your environment.
+
+<Tip>
+  Use `--proto-portscan` in every scan. It skips protocol checks on closed ports and dramatically speeds up scan times.
+</Tip>
+
+## Full domain audit (recommended for engagements)
+
+The recommended starting point for any engagement. Enumerates all domain computers via LDAP, checks all major protocols, runs NTLMv1 GPO detection, and outputs a relay target list alongside plaintext and JSON reports.
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --ntlmv1 \
+  --gen-relay-list relaytargets.txt
+```
+
+This produces `relayking-scan.txt`, `relayking-scan.json`, and `relaytargets.txt` (ready for ntlmrelayx.py's `-tf` flag).
+
+## Lighter authenticated scan (no HTTP/HTTPS)
+
+Reduced scope scan omitting HTTP and HTTPS checks. Useful when you want faster results or when web services in the environment produce noisy or unreliable results.
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --gen-relay-list relaytargets.txt
+```
+
+## Single-target authenticated scan
+
+Target a single host by specifying its IP or FQDN as the final positional argument. Output goes to stdout only (no file).
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  -vv \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  -o plaintext \
+  SERVER1-EXAMPLE.LAB.LOCAL
+```
+
+## Unauthenticated CIDR sweep
+
+Null-auth sweep of a subnet. No credentials required. Useful for initial recon when you have network access but no domain credentials yet.
+
+```bash
+python3 relayking.py \
+  --null-auth \
+  -vv \
+  --protocols smb,ldap,http \
+  -o plaintext \
+  10.0.0.0/24
+```
+
+## Full audit + check all hosts for NTLMv1 via RemoteRegistry
+
+Heavy scan that checks every individual host's registry for `LmCompatibilityLevel` using RemoteRegistry. Use when you need granular per-host NTLMv1 data rather than just the domain GPO setting.
+
+<Warning>
+  `--ntlmv1-all` requires local administrator credentials on each target and is not OPSEC-safe. It also relies on RemoteRegistry being enabled — disabled RemoteRegistry will cause unreliable results. Do not use on red team engagements.
+</Warning>
+
+```bash
+python3 relayking.py \
+  -u 'admin' -p 'admin-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  --threads 10 \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --ntlmv1-all \
+  --gen-relay-list relaytargets.txt
+```
+
+## SOCKS proxy scan
+
+Scan a network accessible only through a SOCKS proxy. `--no-ping` skips ICMP (unsupported over SOCKS), `-ns` routes DNS to an internal server, and `--dns-tcp` forces DNS over TCP.
+
+```bash
+proxychains python3 relayking.py \
+  -u user -p pass \
+  -d domain.local \
+  --dc-ip 10.10.0.1 \
+  --no-ping \
+  -ns 10.10.0.1 \
+  --dns-tcp \
+  --protocols smb,ldap,ldaps,mssql \
+  10.10.0.0/24
+```
+
+For a full proxy audit scan:
+
+```bash
+proxychains python3 relayking.py \
+  -u user -p pass \
+  -d domain.local \
+  --dc-ip 10.10.0.1 \
+  --no-ping \
+  -ns 10.10.0.1 \
+  --dns-tcp \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --gen-relay-list relaytargets.txt
+```
+
+## Kerberos authentication
+
+Authenticate using a Kerberos ccache file. Set `KRB5CCNAME` to the ccache path, use `-k` to enable Kerberos, and pass an FQDN (not an IP) to `--dc-ip` for proper Kerberos name resolution.
+
+```bash
+export KRB5CCNAME=/tmp/lowpriv.ccache
+
+python3 relayking.py \
+  -k \
+  --no-pass \
+  -d client.domain.local \
+  --dc-ip dc01.client.domain.local \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan
+```
+
+If domain controllers require Kerberos but member servers accept NTLM, use `--krb-dc-only` to limit Kerberos auth to DCs only:
+
+```bash
+export KRB5CCNAME=/tmp/lowpriv.ccache
+
+python3 relayking.py \
+  -k \
+  --krb-dc-only \
+  --no-pass \
+  -d client.domain.local \
+  --dc-ip dc01.client.domain.local \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan
+```
+
+## Pass-the-hash
+
+Authenticate using an NTLM hash instead of a plaintext password. Provide the hash in `LMHASH:NTHASH` format. You can use an empty LM hash.
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' \
+  --hashes 'aad3b435b51404eeaad3b435b51404ee:a87f3a337d73085c45f9416be5787d86' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan
+```
+
+## Scan with grouping
+
+Split large target sets into groups to manage scan progress or resume from a specific group. Useful for large domains where you want to track partial progress.
+
+Split 300 targets into groups of 100:
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --max-scangroup 100
+```
+
+Skip the first group and start from the second (useful when restarting a partially completed scan without session resume):
+
+```bash
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --proto-portscan \
+  --max-scangroup 100 \
+  --skip 1
+```
+
+## Session resume
+
+Resume an interrupted `--audit` scan from a session file. No additional flags are needed — output configuration is restored automatically from the session.
+
+```bash
+# Start a long audit (creates relayking-session.resume automatically)
+python3 relayking.py \
+  -u 'lowpriv' -p 'lowpriv-password' \
+  -d client.domain.local \
+  --dc-ip 10.0.0.1 \
+  -vv \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql,http,https \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --gen-relay-list relaytargets.txt
+
+# Resume after interruption
+python3 relayking.py --session-resume relayking-session.resume
+```

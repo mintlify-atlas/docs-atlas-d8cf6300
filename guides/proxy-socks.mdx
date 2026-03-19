@@ -1,0 +1,101 @@
+---
+title: "SOCKS proxy and proxy pivoting"
+description: "Run RelayKing through proxychains or a SOCKS proxy to scan networks accessible only via pivot."
+---
+
+RelayKing can operate through a SOCKS proxy or proxychains when scanning a network that is only reachable via a pivot host. Several flags are specifically designed for this scenario.
+
+## Required flags for proxy use
+
+### `--no-ping`
+
+Skip the ICMP ping sweep that RelayKing normally uses to discover live hosts in CIDR ranges. ICMP is not supported over SOCKS proxies, so the ping sweep will fail or hang without this flag.
+
+```bash
+--no-ping
+```
+
+When `--no-ping` is set, all IPs in the specified CIDR range are added directly to the target list without a liveness check.
+
+### `-ns` / `--nameserver`
+
+Specify a custom DNS server for hostname resolution. When operating over a SOCKS proxy, system DNS will not reach the internal network. Point RelayKing at an internal DNS server — typically the domain controller — to resolve domain computer FQDNs.
+
+```bash
+-ns 10.10.0.1
+```
+
+### `--dns-tcp`
+
+Force DNS queries over TCP instead of UDP. Use this when the SOCKS proxy or tunnel does not support UDP traffic (most do not).
+
+```bash
+--dns-tcp
+```
+
+### `-k` / `--kerberos` and `--krb-dc-only`
+
+Kerberos authentication works reliably through SOCKS proxies. If the environment has domain controllers that reject NTLM but accept Kerberos, use `-k` to authenticate via Kerberos and `--krb-dc-only` to limit Kerberos-only behavior to DC interactions.
+
+```bash
+-k --krb-dc-only
+```
+
+## Example command
+
+```bash
+proxychains python3 relayking.py \
+  -u user -p pass \
+  -d domain.local \
+  --dc-ip 10.10.0.1 \
+  --no-ping \
+  -ns 10.10.0.1 \
+  --dns-tcp \
+  --protocols smb,ldap,ldaps,mssql \
+  10.10.0.0/24
+```
+
+For an audit scan through a proxy:
+
+```bash
+proxychains python3 relayking.py \
+  -u user -p pass \
+  -d domain.local \
+  --dc-ip 10.10.0.1 \
+  --no-ping \
+  -ns 10.10.0.1 \
+  --dns-tcp \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql \
+  -o plaintext,json \
+  --output-file relayking-scan \
+  --gen-relay-list relaytargets.txt
+```
+
+## Kerberos through SOCKS
+
+Kerberos authentication typically works well through SOCKS proxies because it operates over TCP. Set `KRB5CCNAME` to your ccache file path, then pass `-k`:
+
+```bash
+export KRB5CCNAME=/tmp/user.ccache
+proxychains python3 relayking.py \
+  -k \
+  -d domain.local \
+  --dc-ip 10.10.0.1 \
+  --no-ping \
+  -ns 10.10.0.1 \
+  --dns-tcp \
+  --audit \
+  --protocols smb,ldap,ldaps,mssql
+```
+
+## Performance considerations
+
+<Warning>
+  Proxychains adds significant latency to every network connection. Scan times through a proxy will be substantially longer than direct scans. Consider the following to manage this:
+
+  - Use `--proto-portscan` to skip protocol checks on closed ports and avoid timeout waits.
+  - Reduce `--threads` if the proxy connection becomes a bottleneck (default is 10).
+  - Use `--max-scangroup` to split large target sets into smaller groups and track progress.
+  - Reduce the timeout with `--timeout` if the network is responsive but you want faster failure detection.
+</Warning>

@@ -1,0 +1,133 @@
+---
+title: "Active Directory audit mode"
+description: "Enumerate every domain computer via LDAP and scan them for NTLM relay opportunities in one command."
+---
+
+<Warning>
+  Audit mode is **not OPSEC safe**. It issues LDAP queries that enumerate every computer object in Active Directory, performs DNS resolution against every returned hostname, and then actively connects to each host on the selected protocols. This activity is highly visible and will likely be detected by a mature SOC or EDR platform. Review the [OPSEC considerations](/guides/opsec-considerations) page before running in a sensitive environment.
+</Warning>
+
+The `--audit` flag is the fastest way to get full-domain NTLM relay coverage. RelayKing connects to Active Directory over LDAP, pulls every enabled computer account, resolves them in DNS, and feeds the resulting host list directly into the scanner — no manual target enumeration required.
+
+## Requirements
+
+Audit mode requires:
+
+- `-u` / `--username` — any low-privilege domain account
+- `-p` / `--password` — the account's password (or use `-H` for a hash)
+- `-d` / `--domain` — the fully-qualified domain name (e.g., `corp.local`)
+- `--dc-ip` — strongly recommended; the IP address of a domain controller
+
+Without `--dc-ip`, RelayKing attempts to resolve the domain name itself using the system's configured DNS server. If that DNS server cannot resolve domain computer FQDNs, AD enumeration will fail or return no targets.
+
+### Fixing DNS resolution problems
+
+If RelayKing resolves no hosts after AD enumeration, DNS is the most likely cause. Two options:
+
+1. **Use `--dc-ip`** — RelayKing contacts the DC directly for LDAP and uses the DC's IP as the authoritative DNS server for hostname resolution.
+2. **Edit `/etc/resolv.conf`** — Point your system's DNS resolver at the domain controller before running the tool.
+
+## Default protocols
+
+When `--audit` is used without `--protocols`, RelayKing scans the following protocols by default:
+
+```
+smb, ldap, ldaps, mssql
+```
+
+Adding `http` and `https` enables tier-0 HTTP relay path analysis. RelayKing automatically detects ADCS (`/certsrv/`) and SCCM (`/ccm_system_windowsauth`) endpoints and enumerates every NTLM-enabled HTTP path on those hosts.
+
+```bash
+--protocols smb,ldap,ldaps,mssql,http,https
+```
+
+<Note>
+  HTTP/HTTPS path enumeration is significantly slower — each host is checked against approximately 50 NTLM-enabled paths using 20 worker threads per main thread. Expect a much longer scan duration when these protocols are included.
+</Note>
+
+## Ghost SPN check
+
+Ghost SPN detection runs automatically during every `--audit` scan when credentials are present. RelayKing queries AD for Service Principal Names whose hostnames have no DNS record. An attacker who registers one of those missing DNS names can intercept NTLM authentication intended for that service.
+
+Findings are written to `possible-ghost-spns.txt` alongside the main report. Up to five findings are included inline in the report itself to avoid cluttering output. Pass `--no-ghosts` to skip this check entirely.
+
+## Session files
+
+Every `--audit` scan automatically creates a session file (`relayking-session.resume`) in the current directory. The session file path is printed at scan start. If the scan is interrupted, use `--session-resume` to pick up where you left off without re-running AD enumeration or re-scanning already-completed hosts. See [Session resume](/guides/session-resume) for details.
+
+## Audit workflow
+
+<Steps>
+  <Step title="Gather credentials">
+    Obtain any low-privilege domain account. The account does not need admin rights — read access to Active Directory is sufficient for enumeration and most protocol checks.
+  </Step>
+
+  <Step title="Confirm DNS connectivity">
+    Verify your testing host can resolve domain computer FQDNs. A quick check:
+
+    ```bash
+    nslookup dc01.corp.local <dc-ip>
+    ```
+
+    If resolution fails, pass `--dc-ip` or update `/etc/resolv.conf`.
+  </Step>
+
+  <Step title="Run the audit">
+    The recommended command for a full-network audit:
+
+    ```bash
+    python3 relayking.py \
+      -u 'lowpriv' -p 'lowpriv-password' \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      -vv \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql,http,https \
+      --threads 10 \
+      -o plaintext,json \
+      --output-file relayking-scan \
+      --proto-portscan \
+      --ntlmv1 \
+      --gen-relay-list relaytargets.txt
+    ```
+
+    For a lighter scan without HTTP checks:
+
+    ```bash
+    python3 relayking.py \
+      -u 'lowpriv' -p 'lowpriv-password' \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      -vv \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql \
+      -o plaintext,json \
+      --output-file relayking-scan \
+      --proto-portscan \
+      --gen-relay-list relaytargets.txt
+    ```
+  </Step>
+
+  <Step title="Review the session file">
+    The session file path is printed at scan start:
+
+    ```
+    [*] Session file will be saved to: relayking-session.resume
+    ```
+
+    Keep this file. If the scan is interrupted, you can resume with:
+
+    ```bash
+    python3 relayking.py --session-resume relayking-session.resume
+    ```
+  </Step>
+
+  <Step title="Review findings">
+    When the scan completes, check the output files:
+
+    - `relayking-scan.txt` — human-readable report with relay paths sorted by severity
+    - `relayking-scan.json` — machine-readable results for further processing
+    - `relaytargets.txt` — relay target list ready for `ntlmrelayx.py -tf`
+    - `possible-ghost-spns.txt` — full Ghost SPN findings (if any were found)
+  </Step>
+</Steps>

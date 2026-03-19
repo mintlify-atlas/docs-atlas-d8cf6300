@@ -1,0 +1,216 @@
+---
+title: "Troubleshooting"
+description: "Solutions for common RelayKing errors and unexpected behavior."
+---
+
+<Tip>
+  Before reporting an issue, run with `-vv` or `-vvv` to get detailed debug output. Most problems become clear with increased verbosity.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="DNS resolution failures (RelayKing fails to resolve any hosts)">
+    **Symptom**: RelayKing enumerates computers from AD but cannot resolve any hostnames. Scan targets appear empty or all hosts fail immediately.
+
+    **Cause**: Your testing host's DNS is not configured to query the domain's DNS server, so domain computer FQDNs cannot be resolved.
+
+    **Fixes**:
+
+    Force RelayKing to use a specific DNS server with `--dc-ip`, which is also used for DNS resolution:
+
+    ```bash
+    python3 relayking.py \
+      -u lowpriv -p pass \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql
+    ```
+
+    Alternatively, point a custom nameserver at the domain controller directly with `-ns`:
+
+    ```bash
+    python3 relayking.py \
+      -u lowpriv -p pass \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      -ns 10.0.0.1 \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql
+    ```
+
+    Or edit `/etc/resolv.conf` on your testing host to add the domain controller as the primary nameserver:
+
+    ```bash
+    nameserver 10.0.0.1
+    ```
+
+    <Note>
+      If the domain's DNS server refuses to resolve FQDNs for domain computers, that is a network configuration issue — not a RelayKing bug.
+    </Note>
+  </Accordion>
+
+  <Accordion title="LDAP connection failures">
+    **Symptom**: RelayKing cannot connect to LDAP, AD enumeration fails, or `--audit` mode exits early with a connection error.
+
+    **Checks**:
+
+    - Verify the domain name is correct: `-d client.domain.local` (use the full domain, not a NetBIOS name).
+    - Verify `--dc-ip` points to an accessible domain controller IP.
+    - Confirm the DC is reachable on port 389 (LDAP) or 636 (LDAPS):
+
+    ```bash
+    nc -zv 10.0.0.1 389
+    nc -zv 10.0.0.1 636
+    ```
+
+    - If the DC requires LDAPS, add `--ldaps`:
+
+    ```bash
+    python3 relayking.py \
+      -u lowpriv -p pass \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      --ldaps \
+      --audit \
+      --protocols smb,ldap,ldaps
+    ```
+
+    - Run with `-vvv` to see the exact LDAP error:
+
+    ```bash
+    python3 relayking.py -u lowpriv -p pass -d client.domain.local --dc-ip 10.0.0.1 --audit --protocols smb -vvv
+    ```
+  </Accordion>
+
+  <Accordion title="Scan hangs or is very slow">
+    **Symptom**: Scan runs for a long time per host, timeouts are frequent, or overall scan time is unacceptably slow.
+
+    **Fix — use `--proto-portscan`**:
+
+    This flag performs a fast port scan before running protocol checks. It skips protocol checks entirely for closed ports, avoiding timeout waits. This is the single biggest performance improvement available:
+
+    ```bash
+    python3 relayking.py \
+      -u lowpriv -p pass \
+      -d client.domain.local \
+      --dc-ip 10.0.0.1 \
+      --audit \
+      --protocols smb,ldap,ldaps,mssql,http,https \
+      --proto-portscan
+    ```
+
+    **Fix — reduce threads**:
+
+    If the network is becoming a bottleneck, lower `--threads` (default 10):
+
+    ```bash
+    --threads 5
+    ```
+
+    **Fix — adjust timeout**:
+
+    Reduce the per-connection timeout if hosts are consistently unresponsive (default 5 seconds):
+
+    ```bash
+    --timeout 3
+    ```
+
+    **Fix — use scan grouping**:
+
+    For very large domains, split the scan into groups with `--max-scangroup` or `--split-into` to track progress and resume more easily if the scan is interrupted.
+  </Accordion>
+
+  <Accordion title="Authentication failures or permission errors">
+    **Symptom**: RelayKing reports authentication errors, access denied responses, or produces no results despite valid-looking credentials.
+
+    **Checks**:
+
+    - Confirm credentials are correct by testing them independently (e.g., with `smbclient` or `netexec`).
+    - For `--audit` mode, a low-privilege domain account is sufficient — no admin rights needed for basic enumeration.
+    - For `--ntlmv1-all`, local administrator credentials are required on each target. Standard domain credentials will not work for reading the registry.
+    - For pass-the-hash, provide hashes in `LMHASH:NTHASH` format:
+
+    ```bash
+    --hashes 'aad3b435b51404eeaad3b435b51404ee:a87f3a337d73085c45f9416be5787d86'
+    ```
+
+    - Run with `-vv` to see which authentication attempts are failing and why.
+  </Accordion>
+
+  <Accordion title="--ntlmv1-all produces incomplete or missing results">
+    **Symptom**: `--ntlmv1-all` does not return registry data for some or all hosts.
+
+    **Cause**: RemoteRegistry service is disabled on the target hosts.
+
+    **Note**: This is not a RelayKing bug. `--ntlmv1-all` reads `LmCompatibilityLevel` from each host's registry via RemoteRegistry. If the service is disabled on a host, that host's value cannot be read.
+
+    Use `--ntlmv1` (without `-all`) instead to check the domain-wide GPO setting, which does not require RemoteRegistry or admin rights:
+
+    ```bash
+    --ntlmv1
+    ```
+
+    Running `--ntlmv1` is also the minimum requirement to enable cross-protocol SMB relay path detection in the report.
+  </Accordion>
+
+  <Accordion title="HTTP false positives or false negatives">
+    **Symptom**: HTTP or HTTPS results appear incorrect — either reporting relay-able when the service is not, or missing relay-able services.
+
+    **Note**: Some HTTP services behave in non-standard ways that are difficult to account for. HTTP detection is inherently less reliable than SMB or LDAP checks. Edge cases with HTTP(S) services that produce false results are a known limitation.
+
+    **Workaround**:
+
+    - Run with `-vv` to see the raw HTTP responses RelayKing is evaluating.
+    - Manually verify suspicious results by checking the HTTP/HTTPS endpoint directly.
+    - If you are seeing consistent false positives with a specific service type, consider opening an issue with `-vvv` output.
+  </Accordion>
+
+  <Accordion title="Session resume issues">
+    **Symptom**: `--session-resume` fails to load, reports errors, or produces unexpected behavior.
+
+    **Checks**:
+
+    - Confirm the session file exists at the path you are providing:
+
+    ```bash
+    ls -la relayking-session.resume
+    ```
+
+    - Verify you are running the resume against the same target environment. Session files store the resolved target list and scan state — resuming against a different domain or credential set will produce incorrect results.
+    - If the original scan completed successfully (phase `complete`), resuming it will load the session but find no remaining work. Start a new scan instead.
+    - Run with `-vv` to see what state is being restored from the session file.
+  </Accordion>
+
+  <Accordion title="Kerberos authentication issues">
+    **Symptom**: Kerberos authentication fails, tickets are not used, or scan exits with Kerberos-related errors.
+
+    **Checks**:
+
+    - Confirm `KRB5CCNAME` is set to the correct ccache file path:
+
+    ```bash
+    export KRB5CCNAME=/tmp/lowpriv.ccache
+    echo $KRB5CCNAME
+    ```
+
+    - Use an FQDN (not an IP address) for `--dc-ip` when using Kerberos. Kerberos requires a hostname for proper name resolution:
+
+    ```bash
+    --dc-ip dc01.client.domain.local
+    ```
+
+    - If the environment has DCs that require Kerberos but member servers accept NTLM, use `--krb-dc-only` to avoid Kerberos-related failures on non-DC hosts:
+
+    ```bash
+    -k --krb-dc-only
+    ```
+
+    - Use `--no-pass` with `-k` when authenticating via ccache to suppress password prompts:
+
+    ```bash
+    -k --no-pass
+    ```
+
+    - Run with `-vvv` to see detailed Kerberos negotiation output.
+  </Accordion>
+</AccordionGroup>

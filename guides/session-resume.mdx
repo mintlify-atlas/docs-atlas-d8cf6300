@@ -1,0 +1,94 @@
+---
+title: "Session resume"
+description: "Resume interrupted audit scans without re-running AD enumeration or re-scanning completed hosts."
+---
+
+Every `--audit` scan automatically creates a session file that tracks scan progress. If the scan is interrupted — by a network issue, keyboard interrupt, or system crash — you can resume exactly where it left off.
+
+## Session file creation
+
+The session file is created automatically at the start of every `--audit` run. Its path is printed before scanning begins:
+
+```
+[*] Session file will be saved to: relayking-session.resume
+```
+
+The default filename is `relayking-session.resume` in the current working directory.
+
+## What is saved
+
+The session file records:
+
+- **Phase** — current stage of the scan (init, targets\_ready, scanning, complete)
+- **Target list** — the full resolved host list from AD enumeration and DNS resolution
+- **Tier-0 assets** — SCCM, ADCS, and Exchange servers identified during enumeration
+- **DC hostnames** — domain controllers discovered via LDAP
+- **Port scan results** — open ports per host (when `--proto-portscan` is used)
+- **Completed hosts** — per-host scan results for every host that finished scanning
+- **Completed groups** — which scan groups have been fully processed
+- **Output configuration** — `--output-file`, `-o` format list, and `--gen-relay-list` filename
+
+Session writes are atomic (write to a temp file, then rename) and periodic (flushed to disk every five seconds during active scanning, and immediately on phase transitions).
+
+## What is skipped on resume
+
+When `--session-resume` is used, RelayKing skips:
+
+- AD computer enumeration via LDAP
+- DNS resolution for all hosts
+- Port scanning for hosts already in the session
+- Protocol scanning for hosts already marked complete
+
+Only the remaining hosts in each incomplete group are scanned.
+
+## Resuming a scan
+
+```bash
+python3 relayking.py --session-resume relayking-session.resume
+```
+
+No other flags are required for a basic resume. Output configuration (file path, formats, relay list path) is restored from the session automatically.
+
+<Note>
+  If you want to override the output file or format on resume, pass those flags explicitly. Command-line values take precedence over session-restored values.
+</Note>
+
+On resume, RelayKing prints a summary of restored state:
+
+```
+[+] Loaded session file: relayking-session.resume
+[+] Restored output file from session: relayking-scan
+[+] Restored output formats from session: plaintext, json
+[+] Restored 312 target(s) from session (187 already scanned)
+[*] Resuming: 187 hosts restored from session, 125 remaining
+```
+
+## Output behavior on resume
+
+Output is **appended** to existing files rather than overwritten. A blank separator line is written between the previously completed output and the resumed section. This applies to all configured output formats and the relay list file.
+
+## Session lifecycle
+
+| Phase           | Description                                        |
+|-----------------|----------------------------------------------------|
+| `init`          | Session created, no targets loaded yet             |
+| `targets_ready` | AD enumeration and DNS resolution complete         |
+| `scanning`      | Active protocol scanning in progress               |
+| `complete`      | All groups finished; session will not be resumed   |
+
+Once all groups are complete, the session phase is set to `complete`. Attempting to resume a completed session will load successfully but will find no remaining work to do.
+
+## Multi-day engagements
+
+Session files make multi-day assessments straightforward:
+
+```bash
+# Day 1: start the audit, scan runs overnight
+python3 relayking.py -u lowpriv -p pass -d corp.local --dc-ip 10.0.0.1 \
+  --audit --protocols smb,ldap,ldaps,mssql,http,https \
+  -o plaintext,json --output-file relayking-scan \
+  --gen-relay-list relaytargets.txt
+
+# Day 2: resume from exactly where it stopped
+python3 relayking.py --session-resume relayking-session.resume
+```
