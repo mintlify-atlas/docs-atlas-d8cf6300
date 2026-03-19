@@ -1,0 +1,131 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "RelayKing",
+  "projectDescription": "A comprehensive NTLM & Kerberos relay detection and enumeration tool for identifying relay attack opportunities in Active Directory environments.",
+  "theme": "aspen",
+  "primaryColor": "#55acba",
+  "lightColor": "#2b3434",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Command Reference",
+            "pages": [
+              "commands/overview",
+              "commands/authentication",
+              "commands/targets",
+              "commands/detection-options",
+              "commands/output-options",
+              "commands/performance"
+            ]
+          },
+          {
+            "group": "Protocol Detection",
+            "pages": [
+              "protocols/smb",
+              "protocols/http-https",
+              "protocols/ldap-ldaps",
+              "protocols/mssql",
+              "protocols/additional"
+            ]
+          },
+          {
+            "group": "Advanced Detection",
+            "pages": [
+              "advanced/ntlm-reflection",
+              "advanced/cve-2025-54918",
+              "advanced/cve-2019-1040",
+              "advanced/ghost-spn",
+              "advanced/webdav",
+              "advanced/coercion",
+              "advanced/ntlmv1"
+            ]
+          },
+          {
+            "group": "Usage Guides",
+            "pages": [
+              "guides/audit-mode",
+              "guides/relay-path-analysis",
+              "guides/output-formats",
+              "guides/relay-list-generation",
+              "guides/scan-grouping",
+              "guides/session-resume",
+              "guides/proxy-socks",
+              "guides/opsec-considerations"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/examples",
+              "reference/troubleshooting",
+              "reference/known-issues",
+              "reference/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-protocol relay detection (SMB, HTTP/S, LDAP/S, MSSQL, RPC, SMTP, IMAP, WINRM)",
+    "Active Directory audit mode via LDAP enumeration",
+    "Automated relay path analysis with severity prioritization (Critical/High/Medium/Low)",
+    "CVE detection: CVE-2025-54918 and CVE-2019-1040 (Drop the MIC) via UBR checks",
+    "Ghost SPN detection for DNS registration attack candidates",
+    "NTLM reflection vulnerability detection",
+    "WebDAV/WebClient service detection",
+    "Coercion vulnerability detection (PetitPotam, PrinterBug, DFSCoerce)",
+    "NTLMv1 support detection at GPO and per-host level",
+    "Multiple output formats: plaintext, JSON, XML, CSV, grep-able, Markdown",
+    "NTLMRelayX-compatible relay target list generation",
+    "Session resume support for interrupted scans",
+    "Kerberos authentication support with ccache and per-target Kerberos control",
+    "CIDR notation, IP range, file, and AD computer enumeration targeting"
+  ],
+  "publicApiSurface": [
+    "relayking.py (main entry point)",
+    "-u/--username, -p/--password, -d/--domain (authentication flags)",
+    "--hashes LMHASH:NTHASH (pass-the-hash)",
+    "--aesKey (Kerberos AES key)",
+    "-k/--kerberos (Kerberos auth via ccache)",
+    "--krb-dc-only (Kerberos only for DCs)",
+    "--dc-ip (Domain Controller IP)",
+    "-ns/--nameserver (custom DNS)",
+    "--dns-tcp (DNS over TCP)",
+    "--audit (Active Directory audit mode)",
+    "--null-auth (anonymous/null authentication)",
+    "--no-ping (skip ping sweep for SOCKS proxies)",
+    "--session-resume FILE (resume interrupted scan)",
+    "--protocols smb,http,https,ldap,ldaps,mssql,smtp,imap,imaps,rpc,winrm,winrms",
+    "--proto-portscan (fast port scan before protocol checks)",
+    "--ntlmv1 (check domain GPO for NTLMv1)",
+    "--ntlmv1-all (per-host registry NTLMv1 check, requires admin)",
+    "--coerce (detect coercion vulnerabilities)",
+    "--coerce-all (mass coerce all AD computers)",
+    "--coerce-target LISTENER_IP",
+    "--coerce-timeout SECONDS",
+    "--no-ghosts (skip Ghost SPN check)",
+    "-o/--output-format plaintext,json,xml,csv,grep,markdown",
+    "--output-file BASENAME (multi-format file output)",
+    "--gen-relay-list FILE (NTLMRelayX target list)",
+    "-v/-vv/-vvv (verbosity levels)",
+    "--threads N (thread count, default 10)",
+    "--timeout SECONDS (connection timeout, default 5)",
+    "--max-scangroup N (max hosts per scan group)",
+    "--split-into N (split targets into N groups)",
+    "--skip N (skip first N groups)",
+    "--ad-page-size N (LDAP paged query size)"
+  ]
+}
